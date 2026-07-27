@@ -23,6 +23,7 @@ import kotlinx.coroutines.CompletableDeferred
 private class AndroidLocationPermissionController(
     private val context: Context,
     private val requestForegroundLauncher: PermissionLauncher,
+    private val requestNotificationsLauncher: PermissionLauncher,
     private val requestBackgroundLauncher: PermissionLauncher,
 ) : LocationPermissionController {
 
@@ -49,6 +50,13 @@ private class AndroidLocationPermissionController(
             ),
         )
         return status()
+    }
+
+    override suspend fun requestNotifications(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        if (hasPermission(Manifest.permission.POST_NOTIFICATIONS)) return true
+        return requestNotificationsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+            .getOrDefault(Manifest.permission.POST_NOTIFICATIONS, false)
     }
 
     override suspend fun requestBackground(): LocationPermissionStatus {
@@ -100,12 +108,24 @@ actual fun rememberLocationPermissionController(): LocationPermissionController 
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result -> backgroundLauncherHolder[0]?.onResult(result) }
 
+    val notificationsLauncherHolder = remember { arrayOfNulls<PermissionLauncher>(1) }
+    val notificationsActivityLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result -> notificationsLauncherHolder[0]?.onResult(result) }
+
     return remember {
         val foregroundLauncher = PermissionLauncher(foregroundActivityLauncher)
             .also { foregroundLauncherHolder[0] = it }
+        val notificationsLauncher = PermissionLauncher(notificationsActivityLauncher)
+            .also { notificationsLauncherHolder[0] = it }
         val backgroundLauncher = PermissionLauncher(backgroundActivityLauncher)
             .also { backgroundLauncherHolder[0] = it }
 
-        AndroidLocationPermissionController(context, foregroundLauncher, backgroundLauncher)
+        AndroidLocationPermissionController(
+            context,
+            foregroundLauncher,
+            notificationsLauncher,
+            backgroundLauncher,
+        )
     }
 }

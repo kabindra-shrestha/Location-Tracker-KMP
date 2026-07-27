@@ -28,7 +28,7 @@ internal object LocationNotificationFactory {
         manager.createNotificationChannel(channel)
     }
 
-    fun build(context: Context, config: TrackingConfig): Notification {
+    fun build(context: Context, config: TrackingConfig, trackedPointCount: Long = 0): Notification {
         ensureChannel(context)
 
         // A host app MUST supply a valid drawable resource id via TrackingConfig,
@@ -38,7 +38,7 @@ internal object LocationNotificationFactory {
 
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(config.notificationTitle)
-            .setContentText(config.notificationText)
+            .setContentText("${config.notificationText} • $trackedPointCount points tracked")
             .setSmallIcon(iconResId)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

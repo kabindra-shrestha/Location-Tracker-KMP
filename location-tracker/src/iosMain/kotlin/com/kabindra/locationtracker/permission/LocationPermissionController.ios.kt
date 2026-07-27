@@ -54,6 +54,8 @@ private class IosLocationPermissionController(
         return result.toStatus()
     }
 
+    override suspend fun requestNotifications(): Boolean = true
+
     override suspend fun requestBackground(): LocationPermissionStatus {
         val current = manager.authorizationStatus
         if (current == kCLAuthorizationStatusAuthorizedAlways) return LocationPermissionStatus.GrantedAlways

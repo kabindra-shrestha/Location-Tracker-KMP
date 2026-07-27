@@ -1,6 +1,7 @@
 package com.kabindra.locationtracker.service
 
 import android.annotation.SuppressLint
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
@@ -43,6 +44,8 @@ class LocationForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var fusedClient: FusedLocationProviderClient
     private var activeCallback: LocationCallback? = null
+    private var activeConfig = TrackingConfig()
+    private var trackedPointCount = 0L
 
     private val _locations = MutableSharedFlow<TrackedLocation>(extraBufferCapacity = 64)
     val locations: SharedFlow<TrackedLocation> = _locations.asSharedFlow()
@@ -61,6 +64,7 @@ class LocationForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val config = LocationServiceIntents.readConfig(intent)
+        activeConfig = config
         startForeground(
             LocationNotificationFactory.NOTIFICATION_ID,
             LocationNotificationFactory.build(this, config)
@@ -91,6 +95,8 @@ class LocationForegroundService : Service() {
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
+                trackedPointCount += 1
+                updateNotification()
                 serviceScope.launch {
                     _locations.emit(
                         TrackedLocation(
@@ -123,6 +129,13 @@ class LocationForegroundService : Service() {
         _state.value = TrackingState.Stopped
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java).notify(
+            LocationNotificationFactory.NOTIFICATION_ID,
+            LocationNotificationFactory.build(this, activeConfig, trackedPointCount),
+        )
     }
 
     private fun removeActiveCallback() {

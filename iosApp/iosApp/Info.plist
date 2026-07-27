@@ -4,5 +4,21 @@
     <dict>
         <key>CADisableMinimumFrameDurationOnPhone</key>
         <true />
+        <key>NSLocationWhenInUseUsageDescription</key>
+        <string>We need your location to track your attendance and work locations while using the
+            app.
+        </string>
+        <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+        <string>We need continuous location access to track attendance during working hours in the
+            background.
+        </string>
+        <key>NSLocationAlwaysUsageDescription</key>
+        <string>We need continuous location access to track attendance during working hours in the
+            background.
+        </string>
+        <key>UIBackgroundModes</key>
+        <array>
+            <string>location</string>
+        </array>
     </dict>
 </plist>

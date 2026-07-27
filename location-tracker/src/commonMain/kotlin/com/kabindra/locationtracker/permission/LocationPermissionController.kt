@@ -27,6 +27,12 @@ interface LocationPermissionController {
     suspend fun requestForeground(): LocationPermissionStatus
 
     /**
+     * Requests permission to show the Android foreground-service notification.
+     * This is a no-op on platforms that do not require a separate permission.
+     */
+    suspend fun requestNotifications(): Boolean
+
+    /**
      * Requests background ("allow all the time" / "always") permission.
      *
      * Must be called *after* [requestForeground] has already been granted — both
