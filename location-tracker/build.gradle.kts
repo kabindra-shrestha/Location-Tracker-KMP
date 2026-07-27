@@ -3,7 +3,8 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidMultiplatformLibrary)
-    alias(libs.plugins.androidLint)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
     id("maven-publish")
 }
 
@@ -29,7 +30,6 @@ kotlin {
 
     val xcf = XCFramework("LocationTracker")
     listOf(
-        iosX64(),
         iosArm64(),
         iosSimulatorArm64(),
     ).forEach { target ->
@@ -45,7 +45,7 @@ kotlin {
             dependencies {
                 implementation(libs.kotlin.stdlib)
                 implementation(libs.kotlinx.coroutines.core)
-                implementation(libs.androidx.runtime)
+                implementation(libs.compose.runtime)
                 api(libs.compass.geolocation)
                 implementation(libs.compass.geolocation.mobile)
                 implementation(libs.compass.permissions.mobile)

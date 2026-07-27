@@ -14,6 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kabindra.locationtracker.createLocationTracker
@@ -56,13 +57,7 @@ private fun LocationTrackingScreen() {
         Text("Permission: ${permissionStatus ?: "unknown"}")
         Text("Tracking state: $trackingState")
         lastLocation?.let {
-            Text(
-                "Last fix: %.5f, %.5f (±%.0fm)".format(
-                    it.latitude,
-                    it.longitude,
-                    it.accuracyMeters
-                )
-            )
+            Text("Last fix: ${it.latitude}, ${it.longitude} (±${it.accuracyMeters}m)")
         }
 
         Button(onClick = {

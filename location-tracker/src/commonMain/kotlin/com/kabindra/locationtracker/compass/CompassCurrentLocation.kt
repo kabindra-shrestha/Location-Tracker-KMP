@@ -4,6 +4,7 @@ import com.kabindra.locationtracker.model.TrackedLocation
 import dev.jordond.compass.Location
 import dev.jordond.compass.geolocation.Geolocator
 import dev.jordond.compass.geolocation.GeolocatorResult
+import dev.jordond.compass.geolocation.Locator
 import dev.jordond.compass.geolocation.mobile.mobile
 
 /**
@@ -12,15 +13,10 @@ import dev.jordond.compass.geolocation.mobile.mobile
  * enablement checks. This library does NOT use Compass for continuous
  * background tracking — see the module README for why (jordond/compass#250,
  * jordond/compass#90 — background updates aren't supported by Compass yet).
- *
- * NOTE: Compass's public API has moved around across major versions. If this
- * doesn't compile against the version pinned in `libs.versions.toml`, check
- * https://compass.jordond.dev/geolocation/overview for the current signature
- * of `Geolocator.mobile()` / `.current()` — the shape below matches the 3.x line.
  */
 object CompassCurrentLocation {
 
-    private val geolocator: Geolocator by lazy { Geolocator.mobile() }
+    private val geolocator: Geolocator by lazy { Geolocator(Locator.mobile()) }
 
     /**
      * Fetches a single current location fix. Prompts for foreground permission
@@ -32,20 +28,18 @@ object CompassCurrentLocation {
     suspend fun getCurrentLocation(): TrackedLocation? {
         return when (val result = geolocator.current()) {
             is GeolocatorResult.Success -> result.data.toTrackedLocation()
-            is GeolocatorResult.NotSupported,
-            is GeolocatorResult.NotFound,
-            is GeolocatorResult.PermissionError,
-            is GeolocatorResult.GeolocationFailed -> null
+            else -> null
         }
     }
 
     private fun Location.toTrackedLocation(): TrackedLocation = TrackedLocation(
         latitude = coordinates.latitude,
         longitude = coordinates.longitude,
-        accuracyMeters = (coordinates.accuracy ?: 0.0).toFloat(),
-        speedMetersPerSecond = coordinates.speed?.toFloat(),
-        bearingDegrees = coordinates.heading?.toFloat(),
-        altitudeMeters = coordinates.altitude,
-        timestampMs = timestampMillis ?: 0L,
+        accuracyMeters = accuracy.toFloat(),
+        speedMetersPerSecond = speed?.mps,
+        bearingDegrees = azimuth?.degrees,
+        altitudeMeters = mslAltitude?.meters ?: ellipsoidalAltitude?.meters,
+        timestampMs = timestampMillis,
     )
 }
+

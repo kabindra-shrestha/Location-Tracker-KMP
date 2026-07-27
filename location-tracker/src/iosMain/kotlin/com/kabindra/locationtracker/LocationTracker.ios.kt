@@ -5,6 +5,7 @@ import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingState
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.useContents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,12 +18,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import platform.CoreLocation.CLLocation
 import platform.CoreLocation.CLLocationAccuracy
-import platform.CoreLocation.CLLocationAccuracyBest
-import platform.CoreLocation.CLLocationAccuracyHundredMeters
-import platform.CoreLocation.CLLocationAccuracyNearestTenMeters
 import platform.CoreLocation.CLLocationManager
 import platform.CoreLocation.CLLocationManagerDelegateProtocol
 import platform.CoreLocation.kCLAuthorizationStatusAuthorizedAlways
+import platform.CoreLocation.kCLLocationAccuracyBest
+import platform.CoreLocation.kCLLocationAccuracyHundredMeters
+import platform.CoreLocation.kCLLocationAccuracyNearestTenMeters
 import platform.Foundation.NSError
 import platform.Foundation.timeIntervalSince1970
 import platform.darwin.NSObject
@@ -86,9 +87,9 @@ internal class IosLocationTracker : LocationTracker {
     }
 
     private fun LocationPriority.toClAccuracy(): CLLocationAccuracy = when (this) {
-        LocationPriority.HIGH_ACCURACY -> CLLocationAccuracyBest
-        LocationPriority.BALANCED -> CLLocationAccuracyNearestTenMeters
-        LocationPriority.LOW_POWER -> CLLocationAccuracyHundredMeters
+        LocationPriority.HIGH_ACCURACY -> kCLLocationAccuracyBest
+        LocationPriority.BALANCED -> kCLLocationAccuracyNearestTenMeters
+        LocationPriority.LOW_POWER -> kCLLocationAccuracyHundredMeters
     }
 
     private fun CLLocation.toTrackedLocation(): TrackedLocation {

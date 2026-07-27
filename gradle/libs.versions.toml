@@ -1,6 +1,6 @@
 [versions]
-agp = "9.0.1"
-android-compileSdk = "36"
+agp = "9.3.1"
+android-compileSdk = "37"
 android-minSdk = "24"
 android-targetSdk = "36"
 androidx-activity = "1.13.0"
@@ -19,7 +19,7 @@ kotlinStdlib = "2.4.10"
 material3 = "1.11.0-alpha07"
 runner = "1.7.0"
 playServicesLocation = "21.4.0"
-compass = "1.2.2"
+compass = "3.2.0"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
