@@ -4,6 +4,8 @@ import com.kabindra.locationtracker.model.LocationPriority
 import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingState
+import com.kabindra.locationtracker.session.LocationTrackingSession
+import com.kabindra.locationtracker.session.TrackingStopReason
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
 import kotlinx.coroutines.CoroutineScope
@@ -49,7 +51,13 @@ internal class IosLocationTracker : LocationTracker {
 
         override fun locationManager(manager: CLLocationManager, didUpdateLocations: List<*>) {
             val location = didUpdateLocations.lastOrNull() as? CLLocation ?: return
-            trackerScope.launch { _locations.emit(location.toTrackedLocation()) }
+            if (!LocationTrackingSession.isTrackingAllowed()) {
+                stopForPolicy()
+                return
+            }
+            val trackedLocation = location.toTrackedLocation()
+            LocationTrackingSession.onLocation(trackedLocation)
+            trackerScope.launch { _locations.emit(trackedLocation) }
         }
 
         override fun locationManager(manager: CLLocationManager, didFailWithError: NSError) {
@@ -77,10 +85,19 @@ internal class IosLocationTracker : LocationTracker {
         // ------------------------------------------------------------------------
 
         manager.startUpdatingLocation()
+        LocationTrackingSession.markStarted()
         _state.value = TrackingState.Running
     }
 
     override fun stop() {
+        LocationTrackingSession.stop(TrackingStopReason.USER)
+        manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
+        _state.value = TrackingState.Stopped
+    }
+
+    private fun stopForPolicy() {
+        LocationTrackingSession.stop(TrackingStopReason.POLICY)
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
         _state.value = TrackingState.Stopped

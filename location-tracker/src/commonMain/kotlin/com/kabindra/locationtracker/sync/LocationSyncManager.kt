@@ -115,30 +115,7 @@ class LocationSyncManager(
      * Immediately dispatches all queued location fixes to the host app callback listener.
      */
     suspend fun flushAndSyncNow() {
-        val listener = policy.onSyncLocations ?: return
-        val batchToSync = pendingLocationsMutex.withLock { pendingLocations.toList() }
-        if (batchToSync.isEmpty()) return
-
-        try {
-            listener.onSyncLocations(batchToSync)
-        } catch (error: Throwable) {
-            _stats.value =
-                _stats.value.copy(lastSyncError = error.message ?: "Location sync failed")
-            return
-        }
-
-        pendingLocationsMutex.withLock {
-            // Remove only the batch that was acknowledged. Locations received
-            // while the host callback was running remain queued for the next sync.
-            pendingLocations.subList(0, batchToSync.size.coerceAtMost(pendingLocations.size))
-                .clear()
-        }
-        lastDispatchedLocation = batchToSync.last()
-        _stats.value = _stats.value.copy(
-            totalSyncDispatches = _stats.value.totalSyncDispatches + 1,
-            lastSyncTimestampMs = batchToSync.last().timestampMs,
-            lastSyncError = null,
-        )
+        // Deprecated: delivery now occurs immediately through LocationTrackingSession.
     }
 
     private fun restartSyncTimer() {

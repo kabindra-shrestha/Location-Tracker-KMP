@@ -8,6 +8,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.kabindra.locationtracker.internal.LocationTrackerInit
+import com.kabindra.locationtracker.session.LocationTrackingListener
+import com.kabindra.locationtracker.session.LocationTrackingSession
 
 class MainApplication : Application() {
     override fun onCreate() {
@@ -15,6 +17,12 @@ class MainApplication : Application() {
         // Required once before createLocationTracker()/rememberLocationPermissionController()
         // are used anywhere in the app.
         LocationTrackerInit.initialize(this)
+        // Replace this sample listener with the host application's authenticated API call.
+        // It is registered before any foreground service restoration can deliver an event.
+        LocationTrackingSession.initialize(LocationTrackingListener { event ->
+            android.util.Log.i("LocationTracker", "Backend event: $event")
+            true
+        })
     }
 }
 

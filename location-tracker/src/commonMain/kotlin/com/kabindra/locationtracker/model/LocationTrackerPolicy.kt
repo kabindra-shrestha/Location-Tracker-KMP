@@ -11,7 +11,7 @@ enum class TrackingMode {
 data class ScheduleWindow(
     val startHour: Int = 9,
     val startMinute: Int = 0,
-    val endHour: Int = 17,
+    val endHour: Int = 20,
     val endMinute: Int = 0
 ) {
     init {
@@ -37,14 +37,6 @@ data class ScheduleWindow(
 }
 
 /**
- * Functional interface for the host app to receive batch location updates for backend API dispatch.
- * Decouples network/API logic from the SDK.
- */
-fun interface LocationSyncListener {
-    suspend fun onSyncLocations(locations: List<TrackedLocation>)
-}
-
-/**
  * Enterprise policy rules for location tracking. Provided with default values and
  * configurable dynamically from backend responses.
  */
@@ -59,7 +51,7 @@ data class LocationTrackerPolicy(
     val scheduleWindow: ScheduleWindow? = ScheduleWindow(
         startHour = 9,
         startMinute = 0,
-        endHour = 17,
+        endHour = 20,
         endMinute = 0
     ),
 
@@ -69,11 +61,8 @@ data class LocationTrackerPolicy(
     /** Distance displacement threshold in meters (default 50m). Locations within this distance are filtered out. */
     val minDistanceThresholdMeters: Float = 50.0f,
 
-    /** Interval in minutes for periodic batch dispatching to host app listener (e.g. 4, 5, or 10 mins). */
+    /** Retained for source compatibility; delivery is immediate and no longer interval-based. */
     val syncIntervalMinutes: Int = 5,
-
-    /** Callback invoked by the SDK to pass batch location data to the host app for API upload. */
-    val onSyncLocations: LocationSyncListener? = null
 ) {
     init {
         require(minDistanceThresholdMeters >= 0f) {

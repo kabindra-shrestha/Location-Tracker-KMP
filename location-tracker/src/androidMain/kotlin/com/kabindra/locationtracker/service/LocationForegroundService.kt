@@ -18,6 +18,8 @@ import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingState
 import com.kabindra.locationtracker.notification.LocationNotificationFactory
+import com.kabindra.locationtracker.session.LocationTrackingSession
+import com.kabindra.locationtracker.session.TrackingStopReason
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -69,6 +71,7 @@ class LocationForegroundService : Service() {
             LocationNotificationFactory.NOTIFICATION_ID,
             LocationNotificationFactory.build(this, config)
         )
+        LocationTrackingSession.markStarted()
         restartLocationUpdates(config)
         return START_STICKY
     }
@@ -95,8 +98,23 @@ class LocationForegroundService : Service() {
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
+                if (!LocationTrackingSession.isTrackingAllowed()) {
+                    stopTracking(TrackingStopReason.POLICY)
+                    return
+                }
                 trackedPointCount += 1
                 updateNotification()
+                LocationTrackingSession.onLocation(
+                    TrackedLocation(
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        accuracyMeters = location.accuracy,
+                        speedMetersPerSecond = location.speed.takeIf { location.hasSpeed() },
+                        bearingDegrees = location.bearing.takeIf { location.hasBearing() },
+                        altitudeMeters = location.altitude.takeIf { location.hasAltitude() },
+                        timestampMs = location.time,
+                    ),
+                )
                 serviceScope.launch {
                     _locations.emit(
                         TrackedLocation(
@@ -124,7 +142,8 @@ class LocationForegroundService : Service() {
         _state.value = TrackingState.Running
     }
 
-    fun stopTracking() {
+    fun stopTracking(reason: TrackingStopReason = TrackingStopReason.USER) {
+        LocationTrackingSession.stop(reason)
         removeActiveCallback()
         _state.value = TrackingState.Stopped
         stopForeground(STOP_FOREGROUND_REMOVE)

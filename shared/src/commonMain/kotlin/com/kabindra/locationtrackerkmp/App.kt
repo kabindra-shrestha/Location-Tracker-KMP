@@ -22,7 +22,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,25 +33,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kabindra.locationtracker.createLocationTracker
-import com.kabindra.locationtracker.model.LocationSyncListener
 import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.ScheduleWindow
 import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingMode
-import com.kabindra.locationtracker.model.TrackingState
 import com.kabindra.locationtracker.permission.LocationPermissionController
 import com.kabindra.locationtracker.permission.LocationPermissionStatus
 import com.kabindra.locationtracker.permission.rememberLocationPermissionController
-import com.kabindra.locationtracker.schedule.currentLocalScheduleTime
-import com.kabindra.locationtracker.sync.LocationSyncManager
-import kotlinx.coroutines.Dispatchers
+import com.kabindra.locationtracker.session.LocationTrackingSession
+import com.kabindra.locationtrackerkmp.ui.theme.AppTheme
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun App() {
-    MaterialTheme {
+    AppTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             LocationTrackingScreen()
         }
@@ -64,17 +59,13 @@ private fun LocationTrackingScreen() {
     val scope = rememberCoroutineScope()
     val permissionController = rememberLocationPermissionController()
     val tracker = remember { createLocationTracker() }
-    val syncManager = remember { LocationSyncManager() }
 
     val trackingState by tracker.state.collectAsState()
-    val syncStats by syncManager.stats.collectAsState()
+    val sessionState by LocationTrackingSession.state.collectAsState()
 
     var lastLocation by remember { mutableStateOf<TrackedLocation?>(null) }
     var permissionStatus by remember { mutableStateOf<LocationPermissionStatus?>(null) }
     var isRequestingPermission by remember { mutableStateOf(false) }
-
-    // Host app API log
-    val apiLogs = remember { mutableStateListOf<String>() }
 
     // Backend policy simulation state
     var backendTrackingEnabled by remember { mutableStateOf(true) }
@@ -83,7 +74,7 @@ private fun LocationTrackingScreen() {
     var minDistanceThreshold by remember { mutableStateOf(50f) }
     var syncIntervalMinutes by remember { mutableStateOf(1) } // 1 min default for demo/testing
 
-    // Create policy with host app API callback
+    // In production the host app receives this policy from its backend.
     val policy = remember(
         backendTrackingEnabled,
         trackingMode,
@@ -103,24 +94,13 @@ private fun LocationTrackingScreen() {
             isCheckedIn = isCheckedIn,
             minDistanceThresholdMeters = minDistanceThreshold,
             syncIntervalMinutes = syncIntervalMinutes,
-            onSyncLocations = LocationSyncListener { locations ->
-                val logEntry =
-                    "[API Host Sync] Dispatched ${locations.size} location point(s) to Backend API!"
-                withContext(Dispatchers.Main) {
-                    apiLogs.add(0, logEntry)
-                    if (apiLogs.size > 15) apiLogs.removeLast()
-                }
-            }
         )
     }
 
     LaunchedEffect(policy) {
-        syncManager.updatePolicy(policy)
-        if (!policy.isTrackingEnabled ||
-            (policy.trackingMode == TrackingMode.CHECK_IN_OUT && !policy.isCheckedIn)
-        ) {
+        val stoppedByPolicy = LocationTrackingSession.updatePolicy(policy)
+        if (stoppedByPolicy) {
             tracker.stop()
-            syncManager.stop()
         }
     }
 
@@ -132,13 +112,6 @@ private fun LocationTrackingScreen() {
     LaunchedEffect(tracker) {
         tracker.locations.collect { location ->
             lastLocation = location
-            val localTime = currentLocalScheduleTime()
-            // Route through 50m displacement filter & schedule evaluator
-            syncManager.processLocation(
-                location = location,
-                currentHour = localTime.hour,
-                currentMinute = localTime.minute,
-            )
         }
     }
 
@@ -183,13 +156,12 @@ private fun LocationTrackingScreen() {
         ) {
             Button(
                 modifier = Modifier.weight(1f),
-                enabled = trackingState !is TrackingState.Running && !isRequestingPermission,
+                enabled = LocationTrackingSession.canStart() && !isRequestingPermission,
                 onClick = {
                     scope.launch {
                         isRequestingPermission = true
                         val started =
                             requestPermissionThenStartTracking(permissionController, tracker)
-                        if (started) syncManager.start()
                         permissionStatus = permissionController.status()
                         isRequestingPermission = false
                     }
@@ -200,10 +172,9 @@ private fun LocationTrackingScreen() {
 
             OutlinedButton(
                 modifier = Modifier.weight(1f),
-                enabled = trackingState is TrackingState.Running,
+                enabled = sessionState.isActive,
                 onClick = {
                     tracker.stop()
-                    syncManager.stop()
                 }
             ) {
                 Text("Stop Tracking")
@@ -277,45 +248,33 @@ private fun LocationTrackingScreen() {
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Total Raw Fixes Received: ${syncStats.totalReceived}")
-                Text("Filtered Out (<50m movement): ${syncStats.totalFilteredOutWithinThreshold}")
-                Text("Queued for Sync: ${syncStats.totalQueuedForSync}")
-                Text("Host App API Dispatches Triggered: ${syncStats.totalSyncDispatches}")
-                syncStats.lastSyncError?.let {
+                Text("Tracking Session Active: ${sessionState.isActive}")
+                Text("Pending Backend Events: ${sessionState.pendingEventCount}")
+                Text("Last Successful Backend Location: ${sessionState.lastSuccessfullyDeliveredLocation ?: "None"}")
+                sessionState.lastError?.let {
                     Text(
                         "Last Sync Error: $it",
                         color = MaterialTheme.colorScheme.error
                     )
-                }
-
-                Button(
-                    onClick = {
-                        scope.launch { syncManager.flushAndSyncNow() }
-                    },
-                    modifier = Modifier.padding(top = 8.dp)
-                ) {
-                    Text("Force Flush & Sync to Host API Now")
                 }
             }
         }
 
         HorizontalDivider()
 
-        // Host Application API Dispatch Log
-        Text("Host App API Callback Log", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        // Session details are persisted across normal process recreation.
+        Text("Persisted Session", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color(0xFF1E1E1E))
                 .padding(12.dp)
         ) {
-            if (apiLogs.isEmpty()) {
-                Text("No API sync dispatches logged yet...", color = Color.Gray)
-            } else {
-                apiLogs.forEach { log ->
-                    Text(log, color = Color(0xFF4CAF50), fontSize = 12.sp)
-                }
-            }
+            Text(
+                "Last known location: ${sessionState.lastKnownLocation ?: "None"}",
+                color = Color.White
+            )
+            Text("Start is enabled only when the backend policy permits it.", color = Color.Gray)
         }
     }
 }
