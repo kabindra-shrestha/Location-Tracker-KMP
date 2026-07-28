@@ -6,14 +6,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -41,7 +46,10 @@ import com.kabindra.locationtracker.model.TrackingMode
 import com.kabindra.locationtracker.permission.LocationPermissionController
 import com.kabindra.locationtracker.permission.LocationPermissionStatus
 import com.kabindra.locationtracker.permission.rememberLocationPermissionController
+import com.kabindra.locationtracker.session.LocationSyncStatus
 import com.kabindra.locationtracker.session.LocationTrackingSession
+import com.kabindra.locationtracker.session.TrackedLocationDebugEntry
+import com.kabindra.locationtracker.session.formatTrackingTimestamp
 import com.kabindra.locationtrackerkmp.ui.theme.AppTheme
 import kotlinx.coroutines.launch
 
@@ -62,10 +70,12 @@ private fun LocationTrackingScreen() {
 
     val trackingState by tracker.state.collectAsState()
     val sessionState by LocationTrackingSession.state.collectAsState()
+    val developerMode by LocationTrackingSession.developerMode.collectAsState()
 
     var lastLocation by remember { mutableStateOf<TrackedLocation?>(null) }
     var permissionStatus by remember { mutableStateOf<LocationPermissionStatus?>(null) }
     var isRequestingPermission by remember { mutableStateOf(false) }
+    var showTrackedLocations by remember { mutableStateOf(false) }
 
     // Backend policy simulation state
     var backendTrackingEnabled by remember { mutableStateOf(true) }
@@ -235,7 +245,7 @@ private fun LocationTrackingScreen() {
                 }
 
                 Text("Distance Displacement Filter: ${minDistanceThreshold.toInt()} meters")
-                Text("Sync Dispatch Interval: $syncIntervalMinutes minute(s)")
+                Text("Location sampling is configured separately; backend delivery uses the 50m filter.")
             }
         }
 
@@ -257,6 +267,16 @@ private fun LocationTrackingScreen() {
                         color = MaterialTheme.colorScheme.error
                     )
                 }
+                if (developerMode) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Developer Tools", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(
+                        onClick = { showTrackedLocations = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Tracked Locations")
+                    }
+                }
             }
         }
 
@@ -275,6 +295,72 @@ private fun LocationTrackingScreen() {
                 color = Color.White
             )
             Text("Start is enabled only when the backend policy permits it.", color = Color.Gray)
+        }
+    }
+
+    if (showTrackedLocations && developerMode) {
+        TrackedLocationsBottomSheet(
+            locations = sessionState.trackedLocations,
+            onDismiss = { showTrackedLocations = false },
+        )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun TrackedLocationsBottomSheet(
+    locations: List<TrackedLocationDebugEntry>,
+    onDismiss: () -> Unit,
+) {
+    val successfulCount = locations.count { it.syncStatus == LocationSyncStatus.SYNCED }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+        ) {
+            Text("Tracked Locations", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text("Total: ${locations.size}  •  Successfully synced: $successfulCount")
+            if (locations.isEmpty()) {
+                Text(
+                    "No locations recorded for this tracking session.",
+                    modifier = Modifier.padding(vertical = 24.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(
+                        locations,
+                        key = { "${it.eventKind}-${it.location.timestampMs}" }) { entry ->
+                        DebugLocationCard(entry)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugLocationCard(entry: TrackedLocationDebugEntry) {
+    val location = entry.location
+    val isSynced = entry.syncStatus == LocationSyncStatus.SYNCED
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                "${if (isSynced) "✓" else "✕"} ${entry.syncStatus}",
+                color = if (isSynced) Color(0xFF2E7D32) else Color(0xFFC62828),
+                fontWeight = FontWeight.Bold
+            )
+            Text("Event: ${entry.eventKind}", fontWeight = FontWeight.SemiBold)
+            Text("Latitude & Longitude: ${location.latitude}, ${location.longitude}")
+            Text("Date & Time: ${formatTrackingTimestamp(location.timestampMs)}")
+            Text("Accuracy: ±${location.accuracyMeters} m")
+            location.speedMetersPerSecond?.let { Text("Speed: $it m/s") }
+            location.bearingDegrees?.let { Text("Bearing: $it°") }
+            location.altitudeMeters?.let { Text("Altitude: $it m") }
         }
     }
 }

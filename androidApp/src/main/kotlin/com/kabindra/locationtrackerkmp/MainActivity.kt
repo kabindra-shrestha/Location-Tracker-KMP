@@ -1,6 +1,7 @@
 package com.kabindra.locationtrackerkmp
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,7 +23,7 @@ class MainApplication : Application() {
         LocationTrackingSession.initialize(LocationTrackingListener { event ->
             android.util.Log.i("LocationTracker", "Backend event: $event")
             true
-        })
+        }, developerMode = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
     }
 }
 

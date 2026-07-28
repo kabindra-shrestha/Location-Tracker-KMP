@@ -17,6 +17,17 @@ import kotlinx.coroutines.sync.withLock
 
 enum class TrackingStopReason { USER, POLICY }
 
+enum class TrackingEventKind { START, LOCATION, STOP }
+
+enum class LocationSyncStatus { PENDING, SYNCED, FILTERED, FAILED }
+
+/** Debug-only record of every location observed during the current tracking session. */
+data class TrackedLocationDebugEntry(
+    val location: TrackedLocation,
+    val eventKind: TrackingEventKind,
+    val syncStatus: LocationSyncStatus,
+)
+
 sealed interface LocationTrackingEvent {
     val location: TrackedLocation?
 
@@ -42,6 +53,7 @@ data class TrackingSessionState(
     val lastKnownLocation: TrackedLocation? = null,
     val lastSuccessfullyDeliveredLocation: TrackedLocation? = null,
     val pendingEvents: List<LocationTrackingEvent> = emptyList(),
+    val trackedLocations: List<TrackedLocationDebugEntry> = emptyList(),
     val lastError: String? = null,
 ) {
     val pendingEventCount: Int get() = pendingEvents.size
@@ -64,9 +76,13 @@ object LocationTrackingSession {
     private var policy = LocationTrackerPolicy()
     private val _state = MutableStateFlow(TrackingSessionStore.read())
     val state: StateFlow<TrackingSessionState> = _state.asStateFlow()
+    private val _developerMode = MutableStateFlow(false)
+    val developerMode: StateFlow<Boolean> = _developerMode.asStateFlow()
 
-    fun initialize(listener: LocationTrackingListener?) {
+    /** Enable [developerMode] only from a debug/developer host build. */
+    fun initialize(listener: LocationTrackingListener?, developerMode: Boolean = false) {
         this.listener = listener
+        _developerMode.value = developerMode
         retryPendingEvents()
     }
 
@@ -83,10 +99,8 @@ object LocationTrackingSession {
 
     fun canStart(): Boolean {
         val now = currentLocalScheduleTime()
-        val shouldTrackLocation = !_state.value.isActive &&
+        return !_state.value.isActive &&
                 ScheduleEvaluator.shouldTrackLocation(policy, now.hour, now.minute)
-        println("Checking if tracking can start... ${_state.value.isActive} - $policy - $now - $shouldTrackLocation")
-        return shouldTrackLocation
     }
 
     fun markStarted() {
@@ -96,6 +110,7 @@ object LocationTrackingSession {
                 isActive = true,
                 hasDeliveredStart = false,
                 lastSuccessfullyDeliveredLocation = null,
+                trackedLocations = emptyList(),
                 lastError = null,
             )
         }
@@ -108,7 +123,12 @@ object LocationTrackingSession {
                 var current = _state.value.copy(lastKnownLocation = location)
                 val event = when {
                     !current.isActive -> null
-                    !current.hasDeliveredStart -> LocationTrackingEvent.Started(location)
+                    // Do not enqueue a second first-fix upload while the initial event is waiting
+                    // for the host/backend acknowledgement.
+                    !current.hasDeliveredStart && current.pendingEvents.none {
+                        it is LocationTrackingEvent.Started
+                    } -> LocationTrackingEvent.Started(location)
+
                     DistanceFilter.isSignificantMovement(
                         current.lastSuccessfullyDeliveredLocation,
                         location,
@@ -117,8 +137,14 @@ object LocationTrackingSession {
 
                     else -> null
                 }
-                if (event != null) current =
-                    current.copy(pendingEvents = current.pendingEvents + event)
+                current = current.copy(
+                    pendingEvents = if (event == null) current.pendingEvents else current.pendingEvents + event,
+                    trackedLocations = current.trackedLocations + TrackedLocationDebugEntry(
+                        location = location,
+                        eventKind = event?.kind() ?: TrackingEventKind.LOCATION,
+                        syncStatus = if (event == null) LocationSyncStatus.FILTERED else LocationSyncStatus.PENDING,
+                    ),
+                )
                 saveLocked(current)
             }
             retryPendingEvents()
@@ -136,12 +162,20 @@ object LocationTrackingSession {
         if (!current.isActive) return
         // Persist this synchronously so the UI immediately changes from Stop-enabled to Start-eligible.
         mutate {
+            val stopEvent = LocationTrackingEvent.Stopped(
+                location = it.lastKnownLocation,
+                reason = reason,
+            )
             it.copy(
                 isActive = false,
-                pendingEvents = it.pendingEvents + LocationTrackingEvent.Stopped(
-                    location = it.lastKnownLocation,
-                    reason = reason,
-                ),
+                pendingEvents = it.pendingEvents + stopEvent,
+                trackedLocations = it.lastKnownLocation?.let { location ->
+                    it.trackedLocations + TrackedLocationDebugEntry(
+                        location = location,
+                        eventKind = TrackingEventKind.STOP,
+                        syncStatus = LocationSyncStatus.PENDING,
+                    )
+                } ?: it.trackedLocations,
             )
         }
         retryPendingEvents()
@@ -155,12 +189,24 @@ object LocationTrackingSession {
                 while (current.pendingEvents.isNotEmpty()) {
                     val event = current.pendingEvents.first()
                     val delivered = runCatching { uploader.onTrackingEvent(event) }.getOrElse {
-                        current = current.copy(lastError = it.message ?: "Backend delivery failed")
+                        current = current.copy(
+                            lastError = it.message ?: "Backend delivery failed",
+                            trackedLocations = current.trackedLocations.updateStatus(
+                                event,
+                                LocationSyncStatus.FAILED
+                            ),
+                        )
                         saveLocked(current)
                         return@withLock
                     }
                     if (!delivered) {
-                        current = current.copy(lastError = "Backend did not accept tracking event")
+                        current = current.copy(
+                            lastError = "Backend did not accept tracking event",
+                            trackedLocations = current.trackedLocations.updateStatus(
+                                event,
+                                LocationSyncStatus.FAILED
+                            ),
+                        )
                         saveLocked(current)
                         return@withLock
                     }
@@ -169,6 +215,10 @@ object LocationTrackingSession {
                         lastSuccessfullyDeliveredLocation = event.location
                             ?: current.lastSuccessfullyDeliveredLocation,
                         pendingEvents = current.pendingEvents.drop(1),
+                        trackedLocations = current.trackedLocations.updateStatus(
+                            event,
+                            LocationSyncStatus.SYNCED
+                        ),
                         lastError = null,
                     )
                     saveLocked(current)
@@ -186,5 +236,24 @@ object LocationTrackingSession {
     private fun saveLocked(next: TrackingSessionState) {
         _state.value = next
         TrackingSessionStore.write(next)
+    }
+}
+
+private fun LocationTrackingEvent.kind(): TrackingEventKind = when (this) {
+    is LocationTrackingEvent.Started -> TrackingEventKind.START
+    is LocationTrackingEvent.LocationUpdated -> TrackingEventKind.LOCATION
+    is LocationTrackingEvent.Stopped -> TrackingEventKind.STOP
+}
+
+private fun List<TrackedLocationDebugEntry>.updateStatus(
+    event: LocationTrackingEvent,
+    status: LocationSyncStatus,
+): List<TrackedLocationDebugEntry> {
+    val location = event.location ?: return this
+    val kind = event.kind()
+    val index =
+        indexOfLast { it.location.timestampMs == location.timestampMs && it.eventKind == kind }
+    return if (index < 0) this else toMutableList().also {
+        it[index] = it[index].copy(syncStatus = status)
     }
 }

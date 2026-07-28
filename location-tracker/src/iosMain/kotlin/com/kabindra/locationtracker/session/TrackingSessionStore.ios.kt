@@ -15,6 +15,8 @@ actual object TrackingSessionStore {
             ?.toLocation(),
         pendingEvents = defaults.stringForKey(PREFIX + "pending").orEmpty().lineSequence()
             .filter { it.isNotBlank() }.mapNotNull { it.toEvent() }.toList(),
+        trackedLocations = defaults.stringForKey(PREFIX + "tracked_locations").orEmpty()
+            .lineSequence().filter { it.isNotBlank() }.mapNotNull { it.toDebugEntry() }.toList(),
         lastError = defaults.stringForKey(PREFIX + "error"),
     )
 
@@ -26,6 +28,10 @@ actual object TrackingSessionStore {
         defaults.setObject(
             state.pendingEvents.joinToString("\n") { it.encode() },
             PREFIX + "pending"
+        )
+        defaults.setObject(
+            state.trackedLocations.joinToString("\n") { it.encode() },
+            PREFIX + "tracked_locations"
         )
         defaults.setObject(state.lastError, PREFIX + "error")
     }
@@ -67,4 +73,16 @@ private fun String.toEvent(): LocationTrackingEvent? = runCatching {
 
         else -> null
     }
+}.getOrNull()
+
+private fun TrackedLocationDebugEntry.encode(): String =
+    "${eventKind.name}|${syncStatus.name}|${location.encode()}"
+
+private fun String.toDebugEntry(): TrackedLocationDebugEntry? = runCatching {
+    val p = split("|", limit = 3)
+    TrackedLocationDebugEntry(
+        location = requireNotNull(p.getOrNull(2)?.toLocation()),
+        eventKind = TrackingEventKind.valueOf(p[0]),
+        syncStatus = LocationSyncStatus.valueOf(p[1]),
+    )
 }.getOrNull()

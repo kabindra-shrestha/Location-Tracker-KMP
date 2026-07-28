@@ -115,6 +115,31 @@ flowchart TD
 6. If the upload fails, do not advance the last-sent location. Retain the failed fix in durable
    storage so it can be retried.
 
+### Sync-status reference
+
+Both Android and iOS use the same shared `LocationTrackingSession` state machine and therefore
+use these statuses identically:
+
+| Status     | Meaning                                                                                                                                                                            | Next transition                                                                                 |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `PENDING`  | The fix has been accepted for delivery and is waiting for the host uploader/backend acknowledgement.                                                                               | `SYNCED` on a successful acknowledgement; `FAILED` when the uploader throws or returns `false`. |
+| `SYNCED`   | The host uploader confirmed that the backend accepted the event. This location becomes the reference point for the next 50m comparison.                                            | Final for that recorded event.                                                                  |
+| `FILTERED` | The fix was received but was less than 50m from the last successfully synced location, so no backend upload was requested.                                                         | Final for that recorded event.                                                                  |
+| `FAILED`   | The host uploader failed or the backend rejected the event. The event remains in the persistent queue and is retried when the uploader is initialized or another location arrives. | `SYNCED` after a later successful retry; otherwise remains `FAILED`.                            |
+
+### Upload timing and platform consistency
+
+`TrackingConfig.intervalMs` (10 seconds by default) controls how often Android/iOS may request a
+raw platform location fix. It is **not** an upload interval. The shared session code makes the
+same upload decision on both platforms: send the first fix, then send only after a successful
+reference point exists and the new fix is at least 50m away. A vehicle can legitimately travel 50m
+in less than 10 seconds; otherwise a location shown at that cadence should be marked `FILTERED`,
+not uploaded.
+
+Android forwards `FusedLocationProviderClient` fixes and iOS forwards `CLLocationManager` fixes
+into this same session, so filtering, status transitions, persistent retries, and upload scheduling
+are platform-independent. The host uploader is the only platform-specific integration point.
+
 ### Minimal backend payload
 
 The host application's upload implementation receives at least:

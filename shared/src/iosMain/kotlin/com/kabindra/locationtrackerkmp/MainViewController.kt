@@ -1,11 +1,12 @@
 package com.kabindra.locationtrackerkmp
 
 import androidx.compose.ui.window.ComposeUIViewController
+import com.kabindra.locationtracker.session.LocationTrackingListener
 import com.kabindra.locationtracker.session.LocationTrackingSession
 
-fun MainViewController() = ComposeUIViewController {
-    // A host iOS app should register its durable backend uploader before this point.
-    // With no uploader, events remain persisted until the host registers one.
-    LocationTrackingSession.initialize(null)
+fun MainViewController(developerMode: Boolean = false) = ComposeUIViewController {
+    // Demo parity with Android: acknowledge events so debug status transitions can be inspected.
+    // A production iOS host must replace this listener with its authenticated backend uploader.
+    LocationTrackingSession.initialize(LocationTrackingListener { true }, developerMode)
     App()
 }

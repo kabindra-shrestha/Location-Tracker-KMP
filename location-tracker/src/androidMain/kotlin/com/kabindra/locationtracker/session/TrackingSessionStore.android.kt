@@ -11,6 +11,7 @@ actual object TrackingSessionStore {
     private const val LAST_KNOWN = "last_known"
     private const val LAST_SENT = "last_sent"
     private const val PENDING = "pending"
+    private const val TRACKED_LOCATIONS = "tracked_locations"
     private const val ERROR = "error"
 
     private fun preferences() = AndroidLocationTrackerContext.require()
@@ -24,6 +25,8 @@ actual object TrackingSessionStore {
             lastSuccessfullyDeliveredLocation = getString(LAST_SENT, null)?.toLocation(),
             pendingEvents = getString(PENDING, "").orEmpty().lineSequence()
                 .filter { it.isNotBlank() }.mapNotNull { it.toEvent() }.toList(),
+            trackedLocations = getString(TRACKED_LOCATIONS, "").orEmpty().lineSequence()
+                .filter { it.isNotBlank() }.mapNotNull { it.toDebugEntry() }.toList(),
             lastError = getString(ERROR, null),
         )
     }
@@ -35,6 +38,7 @@ actual object TrackingSessionStore {
             .putString(LAST_KNOWN, state.lastKnownLocation?.encode())
             .putString(LAST_SENT, state.lastSuccessfullyDeliveredLocation?.encode())
             .putString(PENDING, state.pendingEvents.joinToString("\n") { it.encode() })
+            .putString(TRACKED_LOCATIONS, state.trackedLocations.joinToString("\n") { it.encode() })
             .putString(ERROR, state.lastError)
             .apply()
     }
@@ -76,4 +80,16 @@ private fun String.toEvent(): LocationTrackingEvent? = runCatching {
 
         else -> null
     }
+}.getOrNull()
+
+private fun TrackedLocationDebugEntry.encode(): String =
+    "${eventKind.name}|${syncStatus.name}|${location.encode()}"
+
+private fun String.toDebugEntry(): TrackedLocationDebugEntry? = runCatching {
+    val p = split("|", limit = 3)
+    TrackedLocationDebugEntry(
+        location = requireNotNull(p.getOrNull(2)?.toLocation()),
+        eventKind = TrackingEventKind.valueOf(p[0]),
+        syncStatus = LocationSyncStatus.valueOf(p[1]),
+    )
 }.getOrNull()
