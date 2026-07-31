@@ -7,7 +7,9 @@ import com.kabindra.locationtracker.schedule.ScheduleEvaluator
 import com.kabindra.locationtracker.schedule.currentLocalScheduleTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +54,8 @@ data class TrackingSessionState(
     val hasDeliveredStart: Boolean = false,
     val lastKnownLocation: TrackedLocation? = null,
     val lastSuccessfullyDeliveredLocation: TrackedLocation? = null,
+    val lastSyncTimestampMs: Long = 0L,
+    val nextSyncTimestampMs: Long = 0L,
     val pendingEvents: List<LocationTrackingEvent> = emptyList(),
     val trackedLocations: List<TrackedLocationDebugEntry> = emptyList(),
     val lastError: String? = null,
@@ -74,6 +78,7 @@ object LocationTrackingSession {
     private val mutex = Mutex()
     private var listener: LocationTrackingListener? = null
     private var policy = LocationTrackerPolicy()
+    private var syncJob: Job? = null
     private val _state = MutableStateFlow(TrackingSessionStore.read())
     val state: StateFlow<TrackingSessionState> = _state.asStateFlow()
     private val _developerMode = MutableStateFlow(false)
@@ -87,6 +92,7 @@ object LocationTrackingSession {
     }
 
     fun updatePolicy(policy: LocationTrackerPolicy): Boolean {
+        val intervalChanged = this.policy.syncIntervalMinutes != policy.syncIntervalMinutes
         this.policy = policy
         val now = currentLocalScheduleTime()
         val remainsEligible = ScheduleEvaluator.shouldTrackLocation(policy, now.hour, now.minute)
@@ -94,6 +100,7 @@ object LocationTrackingSession {
             stop(TrackingStopReason.POLICY)
             return true
         }
+        if (_state.value.isActive && intervalChanged) restartSyncTimer()
         return false
     }
 
@@ -114,6 +121,7 @@ object LocationTrackingSession {
                 lastError = null,
             )
         }
+        restartSyncTimer()
         retryPendingEvents()
     }
 
@@ -129,12 +137,6 @@ object LocationTrackingSession {
                         it is LocationTrackingEvent.Started
                     } -> LocationTrackingEvent.Started(location)
 
-                    DistanceFilter.isSignificantMovement(
-                        current.lastSuccessfullyDeliveredLocation,
-                        location,
-                        policy.minDistanceThresholdMeters,
-                    ) -> LocationTrackingEvent.LocationUpdated(location)
-
                     else -> null
                 }
                 current = current.copy(
@@ -142,7 +144,8 @@ object LocationTrackingSession {
                     trackedLocations = current.trackedLocations + TrackedLocationDebugEntry(
                         location = location,
                         eventKind = event?.kind() ?: TrackingEventKind.LOCATION,
-                        syncStatus = if (event == null) LocationSyncStatus.FILTERED else LocationSyncStatus.PENDING,
+                        // Raw fixes wait for the interval decision. PENDING means not yet uploaded.
+                        syncStatus = LocationSyncStatus.PENDING,
                     ),
                 )
                 saveLocked(current)
@@ -160,6 +163,8 @@ object LocationTrackingSession {
     fun stop(reason: TrackingStopReason) {
         val current = _state.value
         if (!current.isActive) return
+        syncJob?.cancel()
+        syncJob = null
         // Persist this synchronously so the UI immediately changes from Stop-enabled to Start-eligible.
         mutate {
             val stopEvent = LocationTrackingEvent.Stopped(
@@ -227,6 +232,44 @@ object LocationTrackingSession {
         }
     }
 
+    private fun restartSyncTimer() {
+        syncJob?.cancel()
+        val intervalMs = policy.syncIntervalMinutes * 60_000L
+        mutate { it.copy(nextSyncTimestampMs = nowMs() + intervalMs) }
+        syncJob = scope.launch {
+            while (_state.value.isActive) {
+                delay(intervalMs)
+                evaluateLatestLocationForSync()
+            }
+        }
+    }
+
+    private suspend fun evaluateLatestLocationForSync() {
+        mutex.withLock {
+            val current = _state.value
+            val location = current.lastKnownLocation ?: return@withLock
+            if (!current.isActive) return@withLock
+            val shouldUpload = current.lastSuccessfullyDeliveredLocation == null ||
+                DistanceFilter.isSignificantMovement(
+                    current.lastSuccessfullyDeliveredLocation,
+                    location,
+                    policy.minDistanceThresholdMeters,
+                )
+            val event = if (shouldUpload) LocationTrackingEvent.LocationUpdated(location) else null
+            val status = if (shouldUpload) LocationSyncStatus.PENDING else LocationSyncStatus.FILTERED
+            val updatedEntries = current.trackedLocations.updateLatestLocationStatus(location, status)
+            saveLocked(
+                current.copy(
+                    pendingEvents = if (event == null) current.pendingEvents else current.pendingEvents + event,
+                    trackedLocations = updatedEntries,
+                    lastSyncTimestampMs = nowMs(),
+                    nextSyncTimestampMs = nowMs() + policy.syncIntervalMinutes * 60_000L,
+                ),
+            )
+        }
+        retryPendingEvents()
+    }
+
     private fun mutate(transform: (TrackingSessionState) -> TrackingSessionState) {
         val next = transform(_state.value)
         _state.value = next
@@ -238,6 +281,8 @@ object LocationTrackingSession {
         TrackingSessionStore.write(next)
     }
 }
+
+private fun nowMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
 private fun LocationTrackingEvent.kind(): TrackingEventKind = when (this) {
     is LocationTrackingEvent.Started -> TrackingEventKind.START
@@ -256,4 +301,12 @@ private fun List<TrackedLocationDebugEntry>.updateStatus(
     return if (index < 0) this else toMutableList().also {
         it[index] = it[index].copy(syncStatus = status)
     }
+}
+
+private fun List<TrackedLocationDebugEntry>.updateLatestLocationStatus(
+    location: TrackedLocation,
+    status: LocationSyncStatus,
+): List<TrackedLocationDebugEntry> {
+    val index = indexOfLast { it.location.timestampMs == location.timestampMs && it.eventKind == TrackingEventKind.LOCATION }
+    return if (index < 0) this else toMutableList().also { it[index] = it[index].copy(syncStatus = status) }
 }

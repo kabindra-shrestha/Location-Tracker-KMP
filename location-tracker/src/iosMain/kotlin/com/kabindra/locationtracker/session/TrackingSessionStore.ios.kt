@@ -13,6 +13,8 @@ actual object TrackingSessionStore {
         lastKnownLocation = defaults.stringForKey(PREFIX + "last_known")?.toLocation(),
         lastSuccessfullyDeliveredLocation = defaults.stringForKey(PREFIX + "last_sent")
             ?.toLocation(),
+        lastSyncTimestampMs = defaults.doubleForKey(PREFIX + "last_sync").toLong(),
+        nextSyncTimestampMs = defaults.doubleForKey(PREFIX + "next_sync").toLong(),
         pendingEvents = defaults.stringForKey(PREFIX + "pending").orEmpty().lineSequence()
             .filter { it.isNotBlank() }.mapNotNull { it.toEvent() }.toList(),
         trackedLocations = defaults.stringForKey(PREFIX + "tracked_locations").orEmpty()
@@ -25,6 +27,8 @@ actual object TrackingSessionStore {
         defaults.setBool(state.hasDeliveredStart, PREFIX + "started")
         defaults.setObject(state.lastKnownLocation?.encode(), PREFIX + "last_known")
         defaults.setObject(state.lastSuccessfullyDeliveredLocation?.encode(), PREFIX + "last_sent")
+        defaults.setDouble(state.lastSyncTimestampMs.toDouble(), PREFIX + "last_sync")
+        defaults.setDouble(state.nextSyncTimestampMs.toDouble(), PREFIX + "next_sync")
         defaults.setObject(
             state.pendingEvents.joinToString("\n") { it.encode() },
             PREFIX + "pending"

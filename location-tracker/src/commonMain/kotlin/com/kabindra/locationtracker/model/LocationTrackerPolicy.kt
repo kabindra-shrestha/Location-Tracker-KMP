@@ -61,7 +61,7 @@ data class LocationTrackerPolicy(
     /** Distance displacement threshold in meters (default 50m). Locations within this distance are filtered out. */
     val minDistanceThresholdMeters: Float = 50.0f,
 
-    /** Retained for source compatibility; delivery is immediate and no longer interval-based. */
+    /** Interval between displacement checks and ongoing location uploads. Start/stop events are immediate. */
     val syncIntervalMinutes: Int = 5,
 ) {
     init {

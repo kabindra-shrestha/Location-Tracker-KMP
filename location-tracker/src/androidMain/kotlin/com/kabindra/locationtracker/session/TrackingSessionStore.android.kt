@@ -10,6 +10,8 @@ actual object TrackingSessionStore {
     private const val STARTED = "started"
     private const val LAST_KNOWN = "last_known"
     private const val LAST_SENT = "last_sent"
+    private const val LAST_SYNC = "last_sync"
+    private const val NEXT_SYNC = "next_sync"
     private const val PENDING = "pending"
     private const val TRACKED_LOCATIONS = "tracked_locations"
     private const val ERROR = "error"
@@ -23,6 +25,8 @@ actual object TrackingSessionStore {
             hasDeliveredStart = getBoolean(STARTED, false),
             lastKnownLocation = getString(LAST_KNOWN, null)?.toLocation(),
             lastSuccessfullyDeliveredLocation = getString(LAST_SENT, null)?.toLocation(),
+            lastSyncTimestampMs = getLong(LAST_SYNC, 0L),
+            nextSyncTimestampMs = getLong(NEXT_SYNC, 0L),
             pendingEvents = getString(PENDING, "").orEmpty().lineSequence()
                 .filter { it.isNotBlank() }.mapNotNull { it.toEvent() }.toList(),
             trackedLocations = getString(TRACKED_LOCATIONS, "").orEmpty().lineSequence()
@@ -37,6 +41,8 @@ actual object TrackingSessionStore {
             .putBoolean(STARTED, state.hasDeliveredStart)
             .putString(LAST_KNOWN, state.lastKnownLocation?.encode())
             .putString(LAST_SENT, state.lastSuccessfullyDeliveredLocation?.encode())
+            .putLong(LAST_SYNC, state.lastSyncTimestampMs)
+            .putLong(NEXT_SYNC, state.nextSyncTimestampMs)
             .putString(PENDING, state.pendingEvents.joinToString("\n") { it.encode() })
             .putString(TRACKED_LOCATIONS, state.trackedLocations.joinToString("\n") { it.encode() })
             .putString(ERROR, state.lastError)
