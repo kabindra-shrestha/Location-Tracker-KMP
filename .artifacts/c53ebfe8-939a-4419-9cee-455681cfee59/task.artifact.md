@@ -1,0 +1,4 @@
+- [x] Add `SelectionContainer` to coordinates in `App.kt`
+- [x] Add "Copy" button to `DebugLocationCard`
+- [x] Implement platform-neutral clipboard logic
+- [x] Verify copy functionality on Android and iOS

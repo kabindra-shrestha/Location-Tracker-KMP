@@ -1,28 +1,46 @@
 package com.kabindra.locationtrackerkmp
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RichTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,10 +51,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupPositionProvider
+import com.kabindra.locationtracker.LocationTracker
 import com.kabindra.locationtracker.createLocationTracker
 import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.ScheduleWindow
@@ -52,6 +80,9 @@ import com.kabindra.locationtracker.session.TrackedLocationDebugEntry
 import com.kabindra.locationtracker.session.formatTrackingTimestamp
 import com.kabindra.locationtrackerkmp.ui.theme.AppTheme
 import kotlinx.coroutines.launch
+import locationtrackerkmp.shared.generated.resources.Res
+import locationtrackerkmp.shared.generated.resources.info
+import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun App() {
@@ -128,6 +159,7 @@ private fun LocationTrackingScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -206,7 +238,12 @@ private fun LocationTrackingScreen() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Backend Master Flag (isTrackingEnabled)")
+                    Text(
+                        text = "Backend Master Flag (isTrackingEnabled)",
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Switch(
                         checked = backendTrackingEnabled,
                         onCheckedChange = { backendTrackingEnabled = it }
@@ -218,7 +255,12 @@ private fun LocationTrackingScreen() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Tracking Mode: ${trackingMode.name}")
+                    Text(
+                        text = "Tracking Mode: ${trackingMode.name}",
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Button(onClick = {
                         trackingMode = if (trackingMode == TrackingMode.TIME_RANGE) {
                             TrackingMode.CHECK_IN_OUT
@@ -236,7 +278,12 @@ private fun LocationTrackingScreen() {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Check-In Status: ${if (isCheckedIn) "Checked IN" else "Checked OUT"}")
+                        Text(
+                            text = "Check-In Status: ${if (isCheckedIn) "Checked IN" else "Checked OUT"}",
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Switch(
                             checked = isCheckedIn,
                             onCheckedChange = { isCheckedIn = it }
@@ -306,23 +353,185 @@ private fun LocationTrackingScreen() {
     }
 }
 
+enum class LocationFilter(val label: String, val description: String) {
+    ALL("All", "Shows every location fix received from the platform engine."),
+    SYNCED("Synced", "Locations successfully accepted by the backend uploader."),
+    PENDING("Pending", "Locations waiting for the next sync interval or retry."),
+    FILTERED(
+        "Filtered",
+        "Locations dropped because movement was less than the distance threshold."
+    ),
+    FAILED("Failed", "Locations that failed to upload after multiple retries.")
+}
+
+@Composable
+private fun ExpressiveFilterItem(
+    label: String,
+    count: Int,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val backgroundColor by animateColorAsState(
+        if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    )
+    val contentColor by animateColorAsState(
+        if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    // Morph from soft-rounded (12dp) to capsule (28dp or more)
+    val cornerRadius by animateDpAsState(if (isSelected) 28.dp else 12.dp)
+
+    Surface(
+        modifier = Modifier
+            .clip(RoundedCornerShape(cornerRadius))
+            .clickable { onClick() },
+        color = backgroundColor,
+        contentColor = contentColor
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "$label ($count)",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
+            )
+        }
+    }
+}
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun TrackedLocationsBottomSheet(
     locations: List<TrackedLocationDebugEntry>,
     onDismiss: () -> Unit,
 ) {
-    val successfulCount = locations.count { it.syncStatus == LocationSyncStatus.SYNCED }
+    var selectedFilter by remember { mutableStateOf(LocationFilter.ALL) }
+    val tooltipState = rememberTooltipState(isPersistent = true)
+    val scope = rememberCoroutineScope()
+
+    // Custom position provider to center the tooltip horizontally regardless of anchor position
+    val tooltipPositionProvider = remember {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize
+            ): IntOffset {
+                val x = (windowSize.width - popupContentSize.width) / 2
+                val verticalGap = 8
+                var y = anchorBounds.bottom + verticalGap
+
+                // If tooltip doesn't fit below, show it above the anchor
+                if (y + popupContentSize.height > windowSize.height) {
+                    y = anchorBounds.top - popupContentSize.height - verticalGap
+                }
+                return IntOffset(x, y)
+            }
+        }
+    }
+
+    val totalCount = locations.size
+    val syncedCount = locations.count { it.syncStatus == LocationSyncStatus.SYNCED }
+    val pendingCount = locations.count { it.syncStatus == LocationSyncStatus.PENDING }
+    val filteredCount = locations.count { it.syncStatus == LocationSyncStatus.FILTERED }
+    val failedCount = locations.count { it.syncStatus == LocationSyncStatus.FAILED }
+
+    val filteredLocations = when (selectedFilter) {
+        LocationFilter.ALL -> locations
+        LocationFilter.SYNCED -> locations.filter { it.syncStatus == LocationSyncStatus.SYNCED }
+        LocationFilter.PENDING -> locations.filter { it.syncStatus == LocationSyncStatus.PENDING }
+        LocationFilter.FILTERED -> locations.filter { it.syncStatus == LocationSyncStatus.FILTERED }
+        LocationFilter.FAILED -> locations.filter { it.syncStatus == LocationSyncStatus.FAILED }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
-            Text("Tracked Locations", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            Text("Total: ${locations.size}  •  Successfully synced: $successfulCount")
-            if (locations.isEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Tracked Locations", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Spacer(Modifier.width(8.dp))
+                TooltipBox(
+                    positionProvider = tooltipPositionProvider,
+                    tooltip = {
+                        RichTooltip(
+                            modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth(),
+                            title = { Text("Filter Definitions") },
+                            action = {
+                                TextButton(onClick = { scope.launch { tooltipState.dismiss() } }) {
+                                    Text("Got it")
+                                }
+                            }
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                                LocationFilter.entries.forEach { filter ->
+                                    Text(
+                                        text = filter.label,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    Text(
+                                        text = filter.description,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    if (filter != LocationFilter.FAILED) {
+                                        Spacer(Modifier.height(4.dp))
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    state = tooltipState
+                ) {
+                    IconButton(onClick = { scope.launch { tooltipState.show() } }) {
+                        Icon(
+                            painter = painterResource(Res.drawable.info),
+                            contentDescription = "Filter definitions",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+            Text("Total: $totalCount  •  Synced: $syncedCount", color = Color.Gray)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                LocationFilter.entries.forEach { filter ->
+                    val count = when (filter) {
+                        LocationFilter.ALL -> totalCount
+                        LocationFilter.SYNCED -> syncedCount
+                        LocationFilter.PENDING -> pendingCount
+                        LocationFilter.FILTERED -> filteredCount
+                        LocationFilter.FAILED -> failedCount
+                    }
+                    ExpressiveFilterItem(
+                        label = filter.label,
+                        count = count,
+                        isSelected = selectedFilter == filter,
+                        onClick = { selectedFilter = filter }
+                    )
+                }
+            }
+
+            if (filteredLocations.isEmpty()) {
+                val emptyMessage = if (locations.isEmpty()) {
+                    "No locations recorded for this tracking session."
+                } else {
+                    "No locations match the '${selectedFilter.label}' filter."
+                }
                 Text(
-                    "No locations recorded for this tracking session.",
-                    modifier = Modifier.padding(vertical = 24.dp)
+                    emptyMessage,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                    color = Color.Gray
                 )
             } else {
                 LazyColumn(
@@ -330,7 +539,7 @@ private fun TrackedLocationsBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(
-                        locations,
+                        filteredLocations,
                         key = { "${it.eventKind}-${it.location.timestampMs}" }) { entry ->
                         DebugLocationCard(entry)
                     }
@@ -344,6 +553,8 @@ private fun TrackedLocationsBottomSheet(
 private fun DebugLocationCard(entry: TrackedLocationDebugEntry) {
     val location = entry.location
     val isSynced = entry.syncStatus == LocationSyncStatus.SYNCED
+    val clipboardManager = LocalClipboardManager.current
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -355,7 +566,28 @@ private fun DebugLocationCard(entry: TrackedLocationDebugEntry) {
                 fontWeight = FontWeight.Bold
             )
             Text("Event: ${entry.eventKind}", fontWeight = FontWeight.SemiBold)
-            Text("Latitude & Longitude: ${location.latitude}, ${location.longitude}")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SelectionContainer(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Latitude & Longitude: ${location.latitude}, ${location.longitude}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString("${location.latitude}, ${location.longitude}"))
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text("Copy", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+
             Text("Date & Time: ${formatTrackingTimestamp(location.timestampMs)}")
             Text("Accuracy: ±${location.accuracyMeters} m")
             location.speedMetersPerSecond?.let { Text("Speed: $it m/s") }
@@ -367,7 +599,7 @@ private fun DebugLocationCard(entry: TrackedLocationDebugEntry) {
 
 suspend fun requestPermissionThenStartTracking(
     permissionController: LocationPermissionController,
-    tracker: com.kabindra.locationtracker.LocationTracker,
+    tracker: LocationTracker,
     config: TrackingConfig = TrackingConfig(),
 ): Boolean {
     val foregroundStatus = permissionController.requestForeground()
