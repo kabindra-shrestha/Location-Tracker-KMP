@@ -1,4 +1,4 @@
-- [x] Add `SelectionContainer` to coordinates in `App.kt`
-- [x] Add "Copy" button to `DebugLocationCard`
-- [x] Implement platform-neutral clipboard logic
-- [x] Verify copy functionality on Android and iOS
+- [x] Refactor root `README.md` for Implementation App focus
+- [x] Create `location-tracker/README.md` for Library focus
+- [x] Create `location-tracker/TECHNICAL_DOCS.md` with deep-dive details
+- [x] Verify all documentation and links

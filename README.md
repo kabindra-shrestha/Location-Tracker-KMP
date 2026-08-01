@@ -1,213 +1,56 @@
-# KMP Location Tracker
+# Location Tracker KMP
 
-Kotlin Multiplatform / Compose Multiplatform library for continuous foreground
-**and background** location tracking on Android and iOS — built as a reusable
-library module you can publish to GitHub Packages and pull into any project
-(employee tracking, ride-sharing, delivery, etc.).
+A Kotlin Multiplatform (KMP) project providing a robust location tracking library and a comprehensive sample application.
 
-## Why this exists
+## Overview
 
-[Compass](https://github.com/jordond/compass) is a great KMP location toolkit,
-but as of this writing it does **not** support background location updates
-([issue #250](https://github.com/jordond/compass/issues/250),
-[issue #90](https://github.com/jordond/compass/issues/90)) — its
-`Geolocator` is built for foreground "get current location" / "track while
-app is open" use cases.
+This repository consists of two main parts:
+1.  **[location-tracker](location-tracker/)**: A publishable KMP library for continuous background location tracking on Android and iOS.
+2.  **Sample Application**: A Compose Multiplatform implementation demonstrating the library's features, including a real-time dashboard and developer tools.
 
-This library:
+## Implementation App (Sample)
 
-- Uses **Compass** (`compass-geolocation` / `compass-geolocation-mobile`) for
-  one-shot current-location lookups — see [
-  `CompassCurrentLocation`](location-tracker/src/commonMain/kotlin/dev/kabin/locationtracker/compass/CompassCurrentLocation.kt).
-- Implements **continuous background tracking natively** for the parts Compass
-  doesn't cover yet: an Android foreground service (`FusedLocationProviderClient`
-    + `foregroundServiceType="location"`) and an iOS `CLLocationManager` configured
-      with `allowsBackgroundLocationUpdates`.
+The sample app demonstrates how to integrate the library into a modern Compose Multiplatform project.
 
-If Compass adds background support in a future release, the native
-implementations here can be swapped out without touching the public
-`LocationTracker` / `LocationPermissionController` interfaces — that's the
-whole point of keeping them behind `expect`/`actual`.
+### Features
+- **Real-time Dashboard**: Monitor tracking engine state, last known location, and sync status.
+- **Dynamic Policy Controls**: Simulate backend overrides for tracking modes (Time Range vs. Check-in), distance filters, and sync intervals.
+- **Multi-stage Permissions**: Interactive flow for Foreground, Notification, and Background location permissions.
+- **Developer Tools**:
+    - **Persistent Session Logs**: View every location fix recorded in the current session.
+    - **Expressive Filtering**: Filter logs by status (Synced, Pending, Filtered, Failed) with Material 3 Expressive UI.
+    - **Rich Tooltips**: Detailed explanations for library behavior directly in the UI.
+    - **Testing Utilities**: Copy coordinates to clipboard for easy verification.
 
-## Project structure
+### Project Structure
+- `:location-tracker`: The core tracking library.
+- `:shared`: Common Compose UI and business logic for the sample app.
+- `:androidApp`: Android-specific entry point and configuration.
+- `iosApp/`: Xcode project for the iOS entry point.
 
-Restructured per
-the [official recommended KMP structure](https://kotlinlang.org/docs/multiplatform/multiplatform-project-recommended-structure.html):
-app entry points live in their own modules, separate from shared/library code,
-and the library's Android target uses the newer `com.android.kotlin.multiplatform.library`
-plugin (`androidLibrary {}` inside `kotlin {}`) instead of the older `androidTarget {}`
+## Getting Started
 
-+ standalone `android {}` block — this is mandatory once a consumer is on AGP 9+.
+### Prerequisites
+- Android Studio Ladybug+ or IntelliJ IDEA.
+- Xcode (for iOS development).
+- Android device/emulator with Google Play Services.
 
-```
-kmp-location-tracker/
-├── location-tracker/              ← the publishable library module (shared code)
-│   └── src/
-│       ├── commonMain/            ← public API: LocationTracker, TrackingConfig,
-│       │                            TrackedLocation, LocationPermissionController
-│       ├── androidMain/           ← foreground service + FusedLocationProviderClient
-│       └── iosMain/               ← CLLocationManager + background modes
-├── sample/
-│   ├── shared/                    ← shared Compose UI demo code (commonMain + iOS targets)
-│   └── androidApp/                ← thin Android app entry point (depends on
-│                                     :location-tracker and :sample:shared)
-└── .github/workflows/publish.yml  ← publishes :location-tracker to GitHub Packages
-```
+### Running the App
+- **Android**: Select the `androidApp` configuration and click Run.
+- **iOS**: Open `iosApp/iosApp.xcworkspace` in Xcode and Run on a simulator or device.
 
-Why the sample is split this way: the recommended structure says entry-point
-modules (the ones with `applicationId`/`MainActivity`/etc.) should stay separate
-from any module producing shared code, so an `androidApp` can depend on
-`:sample:shared` without `:sample:shared` needing to know anything about being
-launched. If you only want the library, delete the whole `sample/` folder —
-`location-tracker/` has zero dependency on it.
+## Library Documentation
 
-An analogous `iosApp` Xcode project would consume the XCFrameworks produced by
-`:location-tracker` and `:sample:shared` directly (see "Update the iOS
-integration" in the linked doc); it isn't a Gradle module and isn't included here.
+For detailed information on how to use the `location-tracker` library in your own project, including setup, APIs, and platform-specific notes, see:
 
-## Setup (as a consumer)
+👉 **[Location Tracker Library README](location-tracker/README.md)**
 
-### 1. Add the GitHub Packages repository
+## Technical Deep Dive
 
-`settings.gradle.kts`:
+For information on the internal tracking flows, distance filtering logic, and platform-specific background implementations, see:
 
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            url = uri("https://maven.pkg.github.com/<owner>/kmp-location-tracker")
-            credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                password = providers.gradleProperty("gpr.token").orNull
-            }
-        }
-    }
-}
-```
-
-`~/.gradle/gradle.properties` (or CI secrets):
-
-```properties
-gpr.user=your-github-username
-gpr.token=ghp_yourPersonalAccessTokenWithReadPackagesScope
-```
-
-### 2. Add the dependency
-
-```kotlin
-commonMain.dependencies {
-    implementation("com.kabindra:location-tracker:0.1.0")
-}
-```
-
-### 3. Initialize on Android
-
-```kotlin
-class MyApplication : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        LocationTrackerInit.initialize(this)
-    }
-}
-```
-
-No initialization step is needed on iOS.
-
-## Usage
-
-```kotlin
-@Composable
-fun TrackingScreen() {
-    val permissionController = rememberLocationPermissionController()
-    val tracker = remember { createLocationTracker() }
-    val scope = rememberCoroutineScope()
-    val state by tracker.state.collectAsState()
-
-    LaunchedEffect(tracker) {
-        tracker.locations.collect { location ->
-            // send to your backend, update a map, etc.
-        }
-    }
-
-    Button(onClick = {
-        scope.launch {
-            val foreground = permissionController.requestForeground()
-            if (foreground == LocationPermissionStatus.Denied) return@launch
-
-            val background = permissionController.requestBackground()
-            // Decide whether foreground-only is acceptable for your use case
-            // if the user declines the "Always"/"all the time" upgrade.
-
-            tracker.start(
-                TrackingConfig(
-                    intervalMs = 10_000,
-                    minUpdateDistanceMeters = 20f,
-                    priority = LocationPriority.HIGH_ACCURACY,
-                    notificationSmallIconResId = R.drawable.ic_notification, // Android only, REQUIRED
-                ),
-            )
-        }
-    }) {
-        Text("Start tracking")
-    }
-}
-```
-
-## Required platform setup in the consuming app
-
-### Android manifest
-
-Permissions and the service declaration are already merged in automatically
-from the library's manifest. You only need to supply a notification icon
-resource via `TrackingConfig.notificationSmallIconResId` — Android requires a
-real icon for the persistent foreground-service notification.
-
-### iOS Info.plist
-
-```xml
-
-<key>UIBackgroundModes</key><array>
-<string>location</string>
-</array><key>NSLocationWhenInUseUsageDescription</key><string>We use your location to show your
-position on the map.
-</string><key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>We use your location in the
-background to keep your trip/shift accurate.
-</string>
-```
-
-## Notes on battery and platform limits
-
-- Android throttles background location delivery outside of a foreground
-  service — that's exactly why this library runs one. Expect the OS to still
-  reduce delivery frequency under Doze/App Standby if the device is stationary.
-- iOS won't wake a *suspended* app on a fixed timer. `allowsBackgroundLocationUpdates`
-  keeps updates flowing while the device is moving; for scenarios where you also
-  need updates while stationary (e.g. an idle driver), consider layering
-  `startMonitoringSignificantLocationChanges()` as a low-power fallback — that
-  API can also relaunch a terminated app, which plain `startUpdatingLocation()`
-  cannot.
-- Always check `TrackingState.PermissionDenied` / `LocationServicesDisabled`
-  and prompt the user rather than silently failing — both platforms give users
-  easy ways to revoke background access after the fact.
-
-## Publishing a new version
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The `publish.yml` workflow builds and publishes automatically. To publish
-locally instead:
-
-```bash
-export GITHUB_ACTOR=your-username
-export GITHUB_TOKEN=ghp_yourTokenWithWritePackagesScope
-./gradlew :location-tracker:publishAllPublicationsToGitHubPackagesRepository -PVERSION_NAME=0.2.0
-```
+- **[Location Tracking Flow](docs/LOCATION_TRACKING_FLOW.md)**
+- **[Internal Technical Docs](location-tracker/TECHNICAL_DOCS.md)**
 
 ## License
-
-MIT — see [LICENSE](LICENSE).
+MIT

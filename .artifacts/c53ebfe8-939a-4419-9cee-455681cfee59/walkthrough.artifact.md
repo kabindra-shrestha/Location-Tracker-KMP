@@ -1,22 +1,32 @@
-# Walkthrough - Copyable Coordinates
+# Walkthrough - Documentation Refactoring
 
-I have made the latitude and longitude coordinates copyable in the "Tracked Locations" bottom sheet. This allows for easier extraction of location data during testing on both Android and iOS.
+I have reorganized the project documentation to clearly separate the concerns of the **location-tracker library** and the **sample implementation app**.
 
 ## Changes Made
 
-### 1. Manual Selection Support
-- Wrapped the coordinates text in a `SelectionContainer`. This enables users to long-press and manually select any part of the latitude or longitude string.
+### 1. Root README Refactoring
+The root [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/README.md) is now the entry point for the entire repository.
+- **Focus**: Highlights the sample application's features (dashboard, developer tools, expressive UI).
+- **Navigation**: Provides clear links to the library-specific documentation and technical deep-dives.
+- **Prerequisites**: Clearly lists what is needed to run the sample app on Android and iOS.
 
-### 2. One-Tap Copy Button
-- Added an explicit "Copy" button next to the coordinates in each `DebugLocationCard`.
-- Tapping this button immediately copies the formatted `latitude, longitude` string to the device's clipboard.
+### 2. Dedicated Library Documentation
+Created a comprehensive [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/README.md) inside the library module.
+- **Setup Guide**: Detailed instructions for consuming the library via GitHub Packages.
+- **Usage Example**: A clear code snippet showing how to integrate `LocationTracker` and `LocationPermissionController`.
+- **Platform Setup**: Native configuration requirements for Android (Manifest) and iOS (Info.plist).
+- **Sync Status Table**: A quick reference for understanding the location synchronization lifecycle.
 
-### 3. Platform-Neutral Implementation
-- Used `LocalClipboardManager` from the Compose UI platform API, ensuring that the copy functionality works seamlessly on both Android and iOS without needing platform-specific code.
+### 3. Technical Implementation Docs
+Added a new [TECHNICAL_DOCS.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/TECHNICAL_DOCS.md) to provide a deep dive for developers.
+- **Architecture**: Explains the `expect`/`actual` pattern and the background execution engines.
+- **Native Details**: Deep dive into the Android Foreground Service and iOS CLLocationManager configurations.
+- **Business Logic**: Details on the Haversine distance filter, persistence strategies, and tracking modes.
 
 ## Verification
-- Verified that the `DebugLocationCard` layout remains compact and readable with the new "Copy" button.
-- Verified that the coordinates can be both manually selected and copied via the button.
+- Verified all file links within the new READMEs.
+- Ensured technical details are consistent with the existing `docs/` files (PRD and Flow docs).
+- Confirmed that the "Getting Started" section correctly reflects the current project structure.
 
-![Copyable Coordinates Preview](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.artifacts/c53ebfe8-939a-4419-9cee-455681cfee59/walkthrough_copy_coordinates.png)
-*(Note: Verify the new copy functionality in your app)*
+> [!TIP]
+> This structure follows KMP best practices, allowing the library to be published and documented independently while keeping the sample app as a rich demonstration of its capabilities.

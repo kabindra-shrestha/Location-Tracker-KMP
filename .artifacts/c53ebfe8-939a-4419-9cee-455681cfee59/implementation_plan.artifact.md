@@ -1,21 +1,30 @@
-# Implementation Plan - Copyable Coordinates
+# Implementation Plan - README & Documentation Improvements
 
-Make the latitude and longitude in the `DebugLocationCard` copyable on both Android and iOS to facilitate testing.
+Maintain two distinct README files for the `location-tracker` library and the implementation app, detailing technologies, implementation details, flows, and features.
 
 ## Proposed Changes
 
-### [shared](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared)
+### Documentation
 
-#### [MODIFY] [App.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared/src/commonMain/kotlin/com/kabindra/locationtrackerkmp/App.kt)
-- Wrap the coordinates text in `SelectionContainer` to allow users to manually select and copy them.
-- Add an explicit "Copy Coordinates" icon button next to the coordinates for a better "one-tap" experience during testing.
-- Use `LocalClipboardManager` to handle the copy action in a platform-neutral way.
+#### [NEW] [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/README.md)
+Create a comprehensive README for the library module:
+- **Technologies Used**: Kotlin Multiplatform, Compass, FusedLocationProviderClient (Android), CLLocationManager (iOS).
+- **Architecture**: Native background tracking (Foreground Service on Android, Background updates on iOS) with shared logic for filtering and state.
+- **Library Flow**: Details on `LocationTracker` initialization, starting/stopping, and the `LocationTrackingSession` state machine.
+- **Features**: Background tracking, distance filtering, schedule-based tracking, check-in mode, and durable persistence.
+
+#### [MODIFY] [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/README.md)
+Refactor the root README to focus on the Implementation App:
+- **Technologies Used**: Compose Multiplatform, Voyager (if applicable, need to check), Koin/Dependency Injection (need to check), location-tracker library.
+- **App Flow**: Dashboard overview, permission request sequence, policy configuration, and developer tools usage.
+- **Implementation Details**: How `shared` and `androidApp`/`iosApp` interact with the library.
+- **Features**: Real-time dashboard, policy toggles, persistent session viewing, and coordinate copying for testing.
+
+#### [NEW] [TECHNICAL_DOCS.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/TECHNICAL_DOCS.md) (Optional/If needed)
+Extract technical implementation details from `docs/` into the library's module for better locality if appropriate.
 
 ## Verification Plan
 
 ### Manual Verification
-- Deploy to an Android device/emulator.
-- Open the "Tracked Locations" bottom sheet.
-- Verify that you can long-press the coordinates to select them.
-- Verify that tapping the "Copy" icon button copies the coordinates to the clipboard and provides visual feedback (e.g., a simple snackbar or icon change).
-- Verify the same on an iOS device/simulator.
+- Review the generated README files to ensure they are accurate and provide clear instructions for both library consumers and app developers.
+- Verify that all links to files and directories within the READMEs are correct.
