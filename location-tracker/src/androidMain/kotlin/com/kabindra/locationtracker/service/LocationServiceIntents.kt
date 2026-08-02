@@ -10,6 +10,9 @@ import com.kabindra.locationtracker.model.TrackingConfig
  */
 internal object LocationServiceIntents {
 
+    const val ACTION_START_OR_RESTORE = "com.kabindra.locationtracker.action.START_OR_RESTORE"
+    const val ACTION_STOP = "com.kabindra.locationtracker.action.STOP"
+
     private const val EXTRA_INTERVAL_MS = "extra_interval_ms"
     private const val EXTRA_MIN_DISPLACEMENT_M = "extra_min_displacement_m"
     private const val EXTRA_PRIORITY = "extra_priority"
@@ -18,6 +21,7 @@ internal object LocationServiceIntents {
     private const val EXTRA_NOTIF_ICON = "extra_notif_icon"
 
     fun putConfig(intent: Intent, config: TrackingConfig): Intent = intent.apply {
+        action = ACTION_START_OR_RESTORE
         putExtra(EXTRA_INTERVAL_MS, config.intervalMs)
         putExtra(EXTRA_MIN_DISPLACEMENT_M, config.minUpdateDistanceMeters)
         putExtra(EXTRA_PRIORITY, config.priority.name)
@@ -25,6 +29,8 @@ internal object LocationServiceIntents {
         putExtra(EXTRA_NOTIF_TEXT, config.notificationText)
         putExtra(EXTRA_NOTIF_ICON, config.notificationSmallIconResId)
     }
+
+    fun stop(intent: Intent): Intent = intent.apply { action = ACTION_STOP }
 
     fun readConfig(intent: Intent?): TrackingConfig {
         intent ?: return TrackingConfig()

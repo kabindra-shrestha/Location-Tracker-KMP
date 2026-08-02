@@ -23,8 +23,12 @@ enum class TrackingEventKind { START, LOCATION, STOP }
 
 enum class LocationSyncStatus { PENDING, SYNCED, FILTERED, FAILED }
 
+/** A host-mediated attendance action. The SDK never calls a check-in API itself. */
+enum class CheckInOutAction { CHECK_IN, CHECK_OUT }
+
 /** Debug-only record of every location observed during the current tracking session. */
 data class TrackedLocationDebugEntry(
+    val id: String,
     val location: TrackedLocation,
     val eventKind: TrackingEventKind,
     val syncStatus: LocationSyncStatus,
@@ -49,8 +53,18 @@ fun interface LocationTrackingListener {
     suspend fun onTrackingEvent(event: LocationTrackingEvent): Boolean
 }
 
+/**
+ * Implemented by the host application when attendance actions are enabled. The returned policy
+ * must be the authoritative policy response from the host backend.
+ */
+fun interface CheckInOutListener {
+    suspend fun onCheckInOut(action: CheckInOutAction): LocationTrackerPolicy?
+}
+
 data class TrackingSessionState(
     val isActive: Boolean = false,
+    /** A new id is created for every successful local start and survives process recreation. */
+    val sessionId: String? = null,
     val hasDeliveredStart: Boolean = false,
     val lastKnownLocation: TrackedLocation? = null,
     val lastSuccessfullyDeliveredLocation: TrackedLocation? = null,
@@ -59,6 +73,8 @@ data class TrackingSessionState(
     val pendingEvents: List<LocationTrackingEvent> = emptyList(),
     val trackedLocations: List<TrackedLocationDebugEntry> = emptyList(),
     val lastError: String? = null,
+    val activeConfig: com.kabindra.locationtracker.model.TrackingConfig? = null,
+    val activePolicy: LocationTrackerPolicy? = null,
 ) {
     val pendingEventCount: Int get() = pendingEvents.size
 }
@@ -77,23 +93,44 @@ object LocationTrackingSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
     private var listener: LocationTrackingListener? = null
-    private var policy = LocationTrackerPolicy()
-    private var syncJob: Job? = null
+    private var checkInOutListener: CheckInOutListener? = null
     private val _state = MutableStateFlow(TrackingSessionStore.read())
     val state: StateFlow<TrackingSessionState> = _state.asStateFlow()
+    private var policy = _state.value.activePolicy ?: LocationTrackerPolicy()
+    private var syncJob: Job? = null
     private val _developerMode = MutableStateFlow(false)
     val developerMode: StateFlow<Boolean> = _developerMode.asStateFlow()
 
     /** Enable [developerMode] only from a debug/developer host build. */
-    fun initialize(listener: LocationTrackingListener?, developerMode: Boolean = false) {
+    fun initialize(
+        listener: LocationTrackingListener?,
+        developerMode: Boolean = false,
+        checkInOutListener: CheckInOutListener? = null,
+    ) {
         this.listener = listener
+        this.checkInOutListener = checkInOutListener
         _developerMode.value = developerMode
+    }
+
+    /** Restores the common timer and retry queue after a platform process recreation. */
+    fun restoreIfActive() {
+        policy = _state.value.activePolicy ?: policy
+        if (_state.value.isActive && !isTrackingAllowed()) {
+            stop(TrackingStopReason.POLICY)
+            return
+        }
+        if (_state.value.isActive) restartSyncTimer(usePersistedDeadline = true)
         retryPendingEvents()
     }
+
+    /** Requests an attendance policy change from the host; it does not perform network I/O itself. */
+    suspend fun requestCheckInOut(action: CheckInOutAction): LocationTrackerPolicy? =
+        checkInOutListener?.onCheckInOut(action)
 
     fun updatePolicy(policy: LocationTrackerPolicy): Boolean {
         val intervalChanged = this.policy.syncIntervalMinutes != policy.syncIntervalMinutes
         this.policy = policy
+        mutate { it.copy(activePolicy = policy) }
         val now = currentLocalScheduleTime()
         val remainsEligible = ScheduleEvaluator.shouldTrackLocation(policy, now.hour, now.minute)
         if (_state.value.isActive && !remainsEligible) {
@@ -110,15 +147,20 @@ object LocationTrackingSession {
                 ScheduleEvaluator.shouldTrackLocation(policy, now.hour, now.minute)
     }
 
-    fun markStarted() {
+    fun markStarted(config: com.kabindra.locationtracker.model.TrackingConfig) {
         if (_state.value.isActive) return
         mutate {
             it.copy(
                 isActive = true,
+                sessionId = "session-${nowMs()}",
                 hasDeliveredStart = false,
+                lastKnownLocation = null,
                 lastSuccessfullyDeliveredLocation = null,
+                lastSyncTimestampMs = 0L,
                 trackedLocations = emptyList(),
                 lastError = null,
+                activeConfig = config,
+                activePolicy = policy,
             )
         }
         restartSyncTimer()
@@ -128,6 +170,7 @@ object LocationTrackingSession {
     fun onLocation(location: TrackedLocation) {
         scope.launch {
             mutex.withLock {
+                if (!_state.value.isActive) return@withLock
                 var current = _state.value.copy(lastKnownLocation = location)
                 val event = when {
                     !current.isActive -> null
@@ -142,9 +185,11 @@ object LocationTrackingSession {
                 current = current.copy(
                     pendingEvents = if (event == null) current.pendingEvents else current.pendingEvents + event,
                     trackedLocations = current.trackedLocations + TrackedLocationDebugEntry(
+                        id = "${event?.kind() ?: TrackingEventKind.LOCATION}-${location.timestampMs}-${(0..999).random()}",
                         location = location,
                         eventKind = event?.kind() ?: TrackingEventKind.LOCATION,
-                        // Raw fixes wait for the interval decision. PENDING means not yet uploaded.
+                        // Raw fixes wait for the interval decision. PENDING means awaiting the
+                        // next backend decision or acknowledgement; it never means already synced.
                         syncStatus = LocationSyncStatus.PENDING,
                     ),
                 )
@@ -176,6 +221,7 @@ object LocationTrackingSession {
                 pendingEvents = it.pendingEvents + stopEvent,
                 trackedLocations = it.lastKnownLocation?.let { location ->
                     it.trackedLocations + TrackedLocationDebugEntry(
+                        id = "STOP-${location.timestampMs}-${(0..999).random()}",
                         location = location,
                         eventKind = TrackingEventKind.STOP,
                         syncStatus = LocationSyncStatus.PENDING,
@@ -232,14 +278,25 @@ object LocationTrackingSession {
         }
     }
 
-    private fun restartSyncTimer() {
+    private fun restartSyncTimer(usePersistedDeadline: Boolean = false) {
         syncJob?.cancel()
         val intervalMs = policy.syncIntervalMinutes * 60_000L
-        mutate { it.copy(nextSyncTimestampMs = nowMs() + intervalMs) }
+        var nextDeadline = if (usePersistedDeadline && _state.value.nextSyncTimestampMs > nowMs()) {
+            _state.value.nextSyncTimestampMs
+        } else {
+            nowMs() + intervalMs
+        }
+        mutate { it.copy(nextSyncTimestampMs = nextDeadline) }
         syncJob = scope.launch {
             while (_state.value.isActive) {
-                delay(intervalMs)
+                delay((nextDeadline - nowMs()).coerceAtLeast(0L).takeIf { it > 0L } ?: intervalMs)
+                if (!isTrackingAllowed()) {
+                    stop(TrackingStopReason.POLICY)
+                    return@launch
+                }
                 evaluateLatestLocationForSync()
+                nextDeadline = _state.value.nextSyncTimestampMs.takeIf { it > nowMs() }
+                    ?: nowMs() + intervalMs
             }
         }
     }
@@ -255,7 +312,15 @@ object LocationTrackingSession {
                     location,
                     policy.minDistanceThresholdMeters,
                 )
-            val event = if (shouldUpload) LocationTrackingEvent.LocationUpdated(location) else null
+            // A failed movement event stays at the front of the durable retry queue. Do not add
+            // a duplicate event every interval while its acknowledgement is still pending.
+            val hasQueuedMovement =
+                current.pendingEvents.any { it is LocationTrackingEvent.LocationUpdated }
+            val event = if (shouldUpload && !hasQueuedMovement) {
+                LocationTrackingEvent.LocationUpdated(location)
+            } else {
+                null
+            }
             val status = if (shouldUpload) LocationSyncStatus.PENDING else LocationSyncStatus.FILTERED
             val updatedEntries = current.trackedLocations.updateLatestLocationStatus(location, status)
             saveLocked(

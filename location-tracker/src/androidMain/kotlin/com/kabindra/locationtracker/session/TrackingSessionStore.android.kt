@@ -7,6 +7,7 @@ import com.kabindra.locationtracker.model.TrackedLocation
 actual object TrackingSessionStore {
     private const val PREFS = "location_tracking_session"
     private const val ACTIVE = "active"
+    private const val SESSION_ID = "session_id"
     private const val STARTED = "started"
     private const val LAST_KNOWN = "last_known"
     private const val LAST_SENT = "last_sent"
@@ -15,6 +16,8 @@ actual object TrackingSessionStore {
     private const val PENDING = "pending"
     private const val TRACKED_LOCATIONS = "tracked_locations"
     private const val ERROR = "error"
+    private const val CONFIG = "config"
+    private const val POLICY = "policy"
 
     private fun preferences() = AndroidLocationTrackerContext.require()
         .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -22,6 +25,7 @@ actual object TrackingSessionStore {
     actual fun read(): TrackingSessionState = preferences().run {
         TrackingSessionState(
             isActive = getBoolean(ACTIVE, false),
+            sessionId = getString(SESSION_ID, null),
             hasDeliveredStart = getBoolean(STARTED, false),
             lastKnownLocation = getString(LAST_KNOWN, null)?.toLocation(),
             lastSuccessfullyDeliveredLocation = getString(LAST_SENT, null)?.toLocation(),
@@ -32,12 +36,15 @@ actual object TrackingSessionStore {
             trackedLocations = getString(TRACKED_LOCATIONS, "").orEmpty().lineSequence()
                 .filter { it.isNotBlank() }.mapNotNull { it.toDebugEntry() }.toList(),
             lastError = getString(ERROR, null),
+            activeConfig = getString(CONFIG, null)?.toConfig(),
+            activePolicy = getString(POLICY, null)?.toPolicy(),
         )
     }
 
     actual fun write(state: TrackingSessionState) {
         preferences().edit()
             .putBoolean(ACTIVE, state.isActive)
+            .putString(SESSION_ID, state.sessionId)
             .putBoolean(STARTED, state.hasDeliveredStart)
             .putString(LAST_KNOWN, state.lastKnownLocation?.encode())
             .putString(LAST_SENT, state.lastSuccessfullyDeliveredLocation?.encode())
@@ -46,9 +53,61 @@ actual object TrackingSessionStore {
             .putString(PENDING, state.pendingEvents.joinToString("\n") { it.encode() })
             .putString(TRACKED_LOCATIONS, state.trackedLocations.joinToString("\n") { it.encode() })
             .putString(ERROR, state.lastError)
+            .putString(CONFIG, state.activeConfig?.encode())
+            .putString(POLICY, state.activePolicy?.encode())
             .apply()
     }
 }
+
+private fun com.kabindra.locationtracker.model.LocationTrackerPolicy.encode(): String = listOf(
+    isTrackingEnabled,
+    trackingMode.name,
+    scheduleWindow?.startHour ?: "",
+    scheduleWindow?.startMinute ?: "",
+    scheduleWindow?.endHour ?: "",
+    scheduleWindow?.endMinute ?: "",
+    isCheckedIn,
+    minDistanceThresholdMeters,
+    syncIntervalMinutes,
+).joinToString("|")
+
+private fun String.toPolicy(): com.kabindra.locationtracker.model.LocationTrackerPolicy? =
+    runCatching {
+        val p = split("|")
+        val window = p[2].toIntOrNull()?.let {
+            com.kabindra.locationtracker.model.ScheduleWindow(
+                it,
+                p[3].toInt(),
+                p[4].toInt(),
+                p[5].toInt()
+            )
+        }
+        com.kabindra.locationtracker.model.LocationTrackerPolicy(
+            isTrackingEnabled = p[0].toBoolean(),
+            trackingMode = com.kabindra.locationtracker.model.TrackingMode.valueOf(p[1]),
+            scheduleWindow = window,
+            isCheckedIn = p[6].toBoolean(),
+            minDistanceThresholdMeters = p[7].toFloat(),
+            syncIntervalMinutes = p[8].toInt(),
+        )
+    }.getOrNull()
+
+private fun com.kabindra.locationtracker.model.TrackingConfig.encode(): String = listOf(
+    intervalMs, minUpdateDistanceMeters, priority.name, notificationTitle, notificationText,
+    notificationSmallIconResId,
+).joinToString("|")
+
+private fun String.toConfig(): com.kabindra.locationtracker.model.TrackingConfig? = runCatching {
+    val p = split("|")
+    com.kabindra.locationtracker.model.TrackingConfig(
+        p[0].toLong(),
+        p[1].toFloat(),
+        com.kabindra.locationtracker.model.LocationPriority.valueOf(p[2]),
+        p[3],
+        p[4],
+        p[5].toInt()
+    )
+}.getOrNull()
 
 private fun TrackedLocation.encode(): String = listOf(
     latitude, longitude, accuracyMeters, speedMetersPerSecond ?: "", bearingDegrees ?: "",
@@ -89,13 +148,14 @@ private fun String.toEvent(): LocationTrackingEvent? = runCatching {
 }.getOrNull()
 
 private fun TrackedLocationDebugEntry.encode(): String =
-    "${eventKind.name}|${syncStatus.name}|${location.encode()}"
+    "${id}|${eventKind.name}|${syncStatus.name}|${location.encode()}"
 
 private fun String.toDebugEntry(): TrackedLocationDebugEntry? = runCatching {
-    val p = split("|", limit = 3)
+    val p = split("|", limit = 4)
     TrackedLocationDebugEntry(
-        location = requireNotNull(p.getOrNull(2)?.toLocation()),
-        eventKind = TrackingEventKind.valueOf(p[0]),
-        syncStatus = LocationSyncStatus.valueOf(p[1]),
+        id = p[0],
+        location = requireNotNull(p.getOrNull(3)?.toLocation()),
+        eventKind = TrackingEventKind.valueOf(p[1]),
+        syncStatus = LocationSyncStatus.valueOf(p[2]),
     )
 }.getOrNull()

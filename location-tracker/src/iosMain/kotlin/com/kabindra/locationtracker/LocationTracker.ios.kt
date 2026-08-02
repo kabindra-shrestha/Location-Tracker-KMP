@@ -1,6 +1,8 @@
 package com.kabindra.locationtracker
 
+import com.kabindra.locationtracker.IosLocationTracker.start
 import com.kabindra.locationtracker.model.LocationPriority
+import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingState
@@ -27,7 +29,10 @@ import platform.CoreLocation.kCLLocationAccuracyBest
 import platform.CoreLocation.kCLLocationAccuracyHundredMeters
 import platform.CoreLocation.kCLLocationAccuracyNearestTenMeters
 import platform.Foundation.NSError
+import platform.Foundation.NSLog
 import platform.Foundation.timeIntervalSince1970
+import platform.UIKit.UIApplication
+import platform.UIKit.UIApplicationState
 import platform.darwin.NSObject
 
 /**
@@ -36,10 +41,14 @@ import platform.darwin.NSObject
  * cause iOS to silently pause updates once the app is suspended.
  */
 @OptIn(ExperimentalForeignApi::class)
-internal class IosLocationTracker : LocationTracker {
+/**
+ * App-lifecycle CLLocationManager coordinator. It is a singleton rather than a Compose-owned
+ * object, so a normal UI recreation cannot discard background collection or backend delivery.
+ */
+internal object IosLocationTracker : LocationTracker {
 
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val manager = CLLocationManager()
+    internal val manager = CLLocationManager()
 
     private val _locations = MutableSharedFlow<TrackedLocation>(extraBufferCapacity = 64)
     override val locations: Flow<TrackedLocation> = _locations.asSharedFlow()
@@ -51,11 +60,24 @@ internal class IosLocationTracker : LocationTracker {
 
         override fun locationManager(manager: CLLocationManager, didUpdateLocations: List<*>) {
             val location = didUpdateLocations.lastOrNull() as? CLLocation ?: return
+            if (!LocationTrackingSession.state.value.isActive) {
+                // A significant-location wake-up can bring a normally terminated app back. The
+                // engine validates the persisted policy before it starts standard updates again.
+                LocationTrackingEngine.restoreIfActive()
+                if (!LocationTrackingSession.state.value.isActive) return
+            }
             if (!LocationTrackingSession.isTrackingAllowed()) {
-                stopForPolicy()
+                stopNative(TrackingStopReason.POLICY)
                 return
             }
             val trackedLocation = location.toTrackedLocation()
+
+            // Log for verification
+            val isBackground =
+                UIApplication.sharedApplication.applicationState == UIApplicationState.UIApplicationStateBackground
+            val stateLabel = if (isBackground) "BACKGROUND" else "FOREGROUND"
+            NSLog("LocationTracker: [$stateLabel] Received update - Lat: ${trackedLocation.latitude}, Lon: ${trackedLocation.longitude}")
+
             LocationTrackingSession.onLocation(trackedLocation)
             trackerScope.launch { _locations.emit(trackedLocation) }
         }
@@ -72,6 +94,12 @@ internal class IosLocationTracker : LocationTracker {
     }
 
     override fun start(config: TrackingConfig) {
+        val policy = LocationTrackingSession.state.value.activePolicy
+            ?: LocationTrackerPolicy(scheduleWindow = null)
+        LocationTrackingEngine.start(policy, config)
+    }
+
+    internal fun startNative(config: TrackingConfig) {
         _state.value = TrackingState.Starting
 
         manager.delegate = delegate
@@ -85,22 +113,32 @@ internal class IosLocationTracker : LocationTracker {
         // ------------------------------------------------------------------------
 
         manager.startUpdatingLocation()
-        LocationTrackingSession.markStarted()
         _state.value = TrackingState.Running
     }
 
     override fun stop() {
-        LocationTrackingSession.stop(TrackingStopReason.USER)
+        LocationTrackingEngine.stop()
+    }
+
+    internal fun stopNative(reason: TrackingStopReason) {
+        LocationTrackingSession.stop(reason)
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
         _state.value = TrackingState.Stopped
     }
 
-    private fun stopForPolicy() {
-        LocationTrackingSession.stop(TrackingStopReason.POLICY)
-        manager.stopUpdatingLocation()
-        manager.allowsBackgroundLocationUpdates = false
-        _state.value = TrackingState.Stopped
+    internal fun configureReentry(policy: LocationTrackerPolicy?) {
+        manager.delegate = delegate
+        val shouldMonitor = policy?.isTrackingEnabled == true &&
+                policy.trackingMode == com.kabindra.locationtracker.model.TrackingMode.TIME_RANGE &&
+                manager.authorizationStatus == kCLAuthorizationStatusAuthorizedAlways
+        if (shouldMonitor) {
+            // This is not an exact timer. It is the iOS-supported best-effort way to re-enter
+            // after ordinary system termination when the device later changes location.
+            manager.startMonitoringSignificantLocationChanges()
+        } else {
+            manager.stopMonitoringSignificantLocationChanges()
+        }
     }
 
     private fun LocationPriority.toClAccuracy(): CLLocationAccuracy = when (this) {
@@ -123,4 +161,26 @@ internal class IosLocationTracker : LocationTracker {
     }
 }
 
-actual fun createLocationTracker(): LocationTracker = IosLocationTracker()
+internal actual object PlatformTrackingController {
+    actual fun canStart(): Boolean =
+        IosLocationTracker.manager.authorizationStatus == kCLAuthorizationStatusAuthorizedAlways
+
+    actual fun start(config: TrackingConfig): Boolean = runCatching {
+        IosLocationTracker.startNative(config)
+        true
+    }.getOrDefault(false)
+
+    actual fun restore(config: TrackingConfig) {
+        IosLocationTracker.startNative(config)
+    }
+
+    actual fun stop(reason: TrackingStopReason) {
+        IosLocationTracker.stopNative(reason)
+    }
+
+    actual fun schedule(policy: LocationTrackerPolicy?) {
+        IosLocationTracker.configureReentry(policy)
+    }
+}
+
+actual fun createLocationTracker(): LocationTracker = IosLocationTracker

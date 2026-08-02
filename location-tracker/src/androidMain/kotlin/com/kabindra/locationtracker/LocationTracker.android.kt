@@ -5,13 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import androidx.core.content.ContextCompat
 import com.kabindra.locationtracker.internal.AndroidLocationTrackerContext
+import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingState
 import com.kabindra.locationtracker.service.LocationForegroundService
-import com.kabindra.locationtracker.service.LocationServiceIntents
+import com.kabindra.locationtracker.session.LocationTrackingSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,27 +60,20 @@ internal class AndroidLocationTracker(private val appContext: Context) : Locatio
         }
     }
 
+    init {
+        if (LocationTrackingSession.state.value.isActive) bindToService()
+    }
+
     override fun start(config: TrackingConfig) {
-        val intent = LocationServiceIntents.putConfig(
-            Intent(appContext, LocationForegroundService::class.java),
-            config,
-        )
-
-        // startForegroundService (not startService) is required on Android 8+ so the
-        // service has a grace period to call startForeground() before the OS kills it.
-        ContextCompat.startForegroundService(appContext, intent)
-
-        if (!isBound) {
-            appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-            isBound = true
-        } else {
-            // Already bound and running — just push the new config to the live service.
-            boundService?.restartLocationUpdates(config)
-        }
+        val policy = LocationTrackingSession.state.value.activePolicy
+            ?: LocationTrackerPolicy(scheduleWindow = null)
+        if (LocationTrackingEngine.start(policy, config)) bindToService()
     }
 
     override fun stop() {
-        boundService?.stopTracking()
+        // A recreated UI is not necessarily bound to the started foreground service. The engine
+        // always sends an explicit command, so Stop works in either case.
+        LocationTrackingEngine.stop()
         if (isBound) {
             runCatching { appContext.unbindService(connection) }
             isBound = false
@@ -88,6 +81,16 @@ internal class AndroidLocationTracker(private val appContext: Context) : Locatio
         boundService = null
         collectJob?.cancel()
         _state.value = TrackingState.Stopped
+    }
+
+    private fun bindToService() {
+        if (isBound) return
+        appContext.bindService(
+            Intent(appContext, LocationForegroundService::class.java),
+            connection,
+            Context.BIND_AUTO_CREATE,
+        )
+        isBound = true
     }
 }
 

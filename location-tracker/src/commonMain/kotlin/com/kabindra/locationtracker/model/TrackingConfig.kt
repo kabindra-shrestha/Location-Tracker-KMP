@@ -25,7 +25,7 @@ enum class LocationPriority {
  *   at initialization time (see README) or the service will fail to start on Android 8+.
  */
 data class TrackingConfig(
-    val intervalMs: Long = 10_000L,
+    val intervalMs: Long = 30_000L,
     val minUpdateDistanceMeters: Float = 20f,
     val priority: LocationPriority = LocationPriority.HIGH_ACCURACY,
     val notificationTitle: String = "Tracking location",

@@ -12,6 +12,10 @@ import platform.CoreLocation.kCLAuthorizationStatusAuthorizedWhenInUse
 import platform.CoreLocation.kCLAuthorizationStatusDenied
 import platform.CoreLocation.kCLAuthorizationStatusNotDetermined
 import platform.CoreLocation.kCLAuthorizationStatusRestricted
+import platform.UserNotifications.UNAuthorizationOptionAlert
+import platform.UserNotifications.UNAuthorizationOptionBadge
+import platform.UserNotifications.UNAuthorizationOptionSound
+import platform.UserNotifications.UNUserNotificationCenter
 import platform.darwin.NSObject
 
 /**
@@ -54,7 +58,18 @@ private class IosLocationPermissionController(
         return result.toStatus()
     }
 
-    override suspend fun requestNotifications(): Boolean = true
+    override suspend fun requestNotifications(): Boolean {
+        val center = UNUserNotificationCenter.currentNotificationCenter()
+        val deferred = CompletableDeferred<Boolean>()
+        val options =
+            UNAuthorizationOptionAlert or UNAuthorizationOptionSound or UNAuthorizationOptionBadge
+        center.requestAuthorizationWithOptions(options) { granted, error ->
+            deferred.complete(granted)
+        }
+        // Notifications are useful feedback but are not required for CLLocation background updates.
+        deferred.await()
+        return true
+    }
 
     override suspend fun requestBackground(): LocationPermissionStatus {
         val current = manager.authorizationStatus

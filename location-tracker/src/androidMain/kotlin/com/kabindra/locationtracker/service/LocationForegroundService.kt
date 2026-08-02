@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -65,15 +66,26 @@ class LocationForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val config = LocationServiceIntents.readConfig(intent)
+        if (intent?.action == LocationServiceIntents.ACTION_STOP) {
+            stopTracking(TrackingStopReason.USER)
+            return START_NOT_STICKY
+        }
+        // Android can recreate a started service with a null intent. The durable session is the
+        // source of truth in that case; it was written before the foreground service was launched.
+        val config = if (intent == null) {
+            LocationTrackingSession.state.value.activeConfig ?: TrackingConfig()
+        } else {
+            LocationServiceIntents.readConfig(intent)
+        }
         activeConfig = config
         startForeground(
             LocationNotificationFactory.NOTIFICATION_ID,
             LocationNotificationFactory.build(this, config)
         )
-        LocationTrackingSession.markStarted()
+        LocationTrackingSession.markStarted(config)
         restartLocationUpdates(config)
-        return START_STICKY
+        // Redelivers the original configuration if Android recreates this started service.
+        return START_REDELIVER_INTENT
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -82,6 +94,11 @@ class LocationForegroundService : Service() {
         removeActiveCallback()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // This service is intentionally independent from the UI task. Never stop it here.
+        super.onTaskRemoved(rootIntent)
     }
 
     /** Called both from [onStartCommand] and from a live bound client requesting a config change. */
@@ -104,6 +121,13 @@ class LocationForegroundService : Service() {
                 }
                 trackedPointCount += 1
                 updateNotification()
+
+                // Log for verification
+                Log.d(
+                    "LocationTracker",
+                    "BACKGROUND TRACKING: Received fix - Lat: ${location.latitude}, Lon: ${location.longitude}"
+                )
+
                 LocationTrackingSession.onLocation(
                     TrackedLocation(
                         latitude = location.latitude,

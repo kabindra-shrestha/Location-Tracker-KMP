@@ -1,174 +1,197 @@
-# Location Tracking Flow
+# Production KMP Location Tracking Lifecycle
 
-## Purpose
+## Scope and defaults
 
-This document explains the Kotlin Multiplatform (KMP) tracker as it works today on Android and
-iOS, and defines the simplified target flow for sending location to a host application's backend.
+This library uses one shared tracking state machine for Android and iOS. The platform collects
+raw fixes; the shared session owns policy evaluation, durable event delivery, retry state, and
+the 50m synchronization rule.
 
-The target scope is intentionally small:
+The balanced default profile is:
 
-- send latitude and longitude immediately for an accepted location fix;
-- do not send a location that is less than 50 metres from the last location successfully sent to
-  the backend.
+| Concern                          | Default                    |
+|----------------------------------|----------------------------|
+| Raw location request             | about every 30 seconds     |
+| Platform displacement            | 20m                        |
+| Backend synchronization interval | 5 minutes (backend policy) |
+| Backend displacement threshold   | 50m (backend policy)       |
 
-Schedule windows, check-in/check-out, periodic batch sync, accuracy-policy changes, and other
-policy rules are outside the scope of this flow.
+The host application provides the authenticated API uploader. The SDK does **not** contain an HTTP
+client, endpoint, or credentials.
 
-## Current implementation
+## Architecture
 
-When the user taps **Start Tracking**, the app requests the required permissions and starts the
-platform tracker:
-
-- **Android:** `LocationForegroundService` subscribes to `FusedLocationProviderClient` updates.
-- **iOS:** `CLLocationManager` starts standard location updates with
-  `allowsBackgroundLocationUpdates`, `pausesLocationUpdatesAutomatically = false`, and the
-  background-location indicator enabled. `Info.plist` declares the `location` background mode.
-
-Both platform trackers emit each fix through an in-memory `SharedFlow`.
-
-While the Compose app is alive, `App.kt` collects that flow and passes the fixes to
-`LocationSyncManager`. The manager applies the distance filter, holds accepted fixes in an
-in-memory queue, and eventually calls `LocationSyncListener`. The demo listener only writes an
-entry to the UI log: it does not make a real backend request.
+`LocationTrackingEngine` is the only lifecycle entry point. It is initialized once by Android's
+`Application` and iOS's `App` initializer, before Compose renders. The screen only requests
+permission, invokes start/stop, and renders the persisted state.
 
 ```mermaid
 flowchart TD
-    A[User taps Start Tracking] --> B[Request location and notification permissions]
-    B --> C{Platform}
-    C -->|Android| D[Start LocationForegroundService]
-    C -->|iOS| E[Start CLLocationManager background updates]
-    D --> F[Android location fix]
-    E --> G[iOS location fix]
-    F --> H[Emit fix through in-memory SharedFlow]
-    G --> H
-    H --> I[Compose App.kt collector]
-    I --> J[LocationSyncManager]
-    J --> K[In-memory distance filter and queue]
-    K --> L[LocationSyncListener]
-    L --> M[Demo UI log, not a backend API]
+    H[Host application startup] --> E[LocationTrackingEngine.initialize]
+    E --> S[Restore persisted session, policy, config, queue and timer]
+    S --> P{Platform owner}
+    P -->|Android| A[Started LocationForegroundService]
+    P -->|iOS| I[Singleton CLLocationManager coordinator]
+    A --> R[Raw location fix]
+    I --> R
+    R --> D[Persist last raw fix and debug entry]
+    D --> X{Start event waiting?}
+    X -->|Yes| U[Deliver Started immediately]
+    X -->|No| T[Wait for persisted sync deadline]
+    T --> F{At least 50m from last successfully synced fix?}
+    F -->|No| FL[Mark raw fix FILTERED]
+    F -->|Yes| Q[Persist LocationUpdated in retry queue]
+    U --> B[Host listener uploads event]
+    Q --> B
+    B -->|Acknowledged| OK[Mark SYNCED and update last-synced reference]
+    B -->|Failed| RETRY[Mark FAILED; keep event for retry]
 ```
 
-### Why delivery stops after the app is destroyed
+### Persistent session state
 
-The Android foreground service or iOS location manager owns location collection, but the current
-sync manager, pending queue, and listener are owned by the Compose app process. They are in memory
-only. If that process is destroyed, there is no durable backend-delivery path, so new location
-fixes cannot reach the host callback.
+The Android `SharedPreferences` and iOS `NSUserDefaults` stores persist:
 
-Android termination cases are different:
+- active flag and session identifier;
+- active backend policy and raw-collection config;
+- last raw location and last successfully delivered location;
+- last/next sync timestamps;
+- pending backend events and last error;
+- debug records for the current session.
 
-- **User swipes the app away from Recents:** a started foreground service can usually continue,
-  and `START_STICKY` asks Android to recreate it after process pressure. The current app-side sync
-  callback is still lost when the app process is gone.
-- **Android kills the process for resources:** Android may later recreate a sticky foreground
-  service, but in-memory state and the app-side callback are lost.
-- **User force-stops the app from Settings:** Android stops the service and prevents normal
-  background restart. The user must open the app and start tracking again.
+Only a successful host acknowledgement advances the `lastSuccessfullyDeliveredLocation` reference.
+A failed event remains queued and is retried after initialization and on the next synchronization
+attempt. The engine calculates the next interval from the persisted deadline, preventing duplicate
+timers after a normal process recreation.
 
-iOS lifecycle cases are different:
+## Event and synchronization behavior
 
-- **App moves to the background or is suspended:** `CLLocationManager` can continue to deliver
-  updates when the user has granted **Always** location permission and the `location` background
-  mode is declared. The blue background-location indicator is shown. The app must remain alive for
-  the current in-memory callback path to work.
-- **iOS terminates the app:** the current location manager, queue, and callback are destroyed.
-  The existing standard-location implementation does not persist enough state to restore backend
-  delivery automatically, so it must not be relied on after termination.
-- **User force-quits from the app switcher:** background tracking stops. iOS does not relaunch the
-  app for normal location updates until the user opens it again.
+The host receives typed `LocationTrackingEvent` values:
 
-## Target simplified flow
+- `Started(firstLocation)` — sent as soon as the first valid fix arrives after start;
+- `LocationUpdated(location)` — considered only at a sync interval;
+- `Stopped(lastKnownLocation, reason)` — sent immediately on user or policy stop, regardless of
+  distance.
 
-The platform background tracking component must own collection, filtering, durable tracking state,
-and the hand-off to the host application's durable upload mechanism. That component is
-`LocationForegroundService` on Android and `CLLocationManager` plus the iOS app background
-execution path on iOS. The UI only starts/stops tracking and displays status; it must not be the
-only route by which a location reaches the backend.
+Payload locations include `latitude`, `longitude`, `timestampMs`, and optional accuracy, speed,
+bearing, and altitude.
 
-```mermaid
-flowchart TD
-    A[User taps Start Tracking] --> B[Persist tracking-active state]
-    B --> C{Platform tracker}
-    C -->|Android| D[LocationForegroundService receives GPS fix]
-    C -->|iOS| E[CLLocationManager receives GPS fix]
-    D --> F[Apply durable send flow]
-    E --> F
-    F --> G{Last successfully sent location exists?}
-    G -->|No: first valid fix| H[Send latitude and longitude immediately]
-    G -->|Yes| I[Calculate Haversine distance]
-    I --> J{Distance less than 50m?}
-    J -->|Yes| K[Ignore fix: do not call backend]
-    J -->|No: 50m or more| H
-    H --> L{Host backend upload succeeds?}
-    L -->|Yes| M[Persist this fix as last successfully sent]
-    L -->|No| N[Keep last sent fix unchanged and retain failed fix for retry]
+For an ongoing `LocationUpdated` decision:
+
+1. Continue collecting every accepted platform fix. Do not upload each raw callback.
+2. At `syncIntervalMinutes`, compare the latest raw fix with the **last successfully synced** fix.
+3. `< 50m` is `FILTERED`; no API request is made.
+4. `>= 50m` is queued as `PENDING` and delivered immediately to the host listener.
+5. A `true` listener result marks the matching record `SYNCED` and moves the reference point.
+6. `false` or an exception marks it `FAILED`, retains it in the durable retry queue, and leaves the
+   reference point unchanged.
+
+`Started` and `Stopped` bypass both the interval and the 50m filter. Exactly 50m is delivered.
+
+### Status definitions
+
+| Status     | Meaning                                                                                          | Transition                        |
+|------------|--------------------------------------------------------------------------------------------------|-----------------------------------|
+| `PENDING`  | A raw fix is awaiting its interval decision, or an event is waiting for backend acknowledgement. | `SYNCED`, `FAILED`, or `FILTERED` |
+| `SYNCED`   | The host confirmed backend acceptance.                                                           | Final                             |
+| `FILTERED` | The interval decision found movement below the configured threshold. No upload was attempted.    | Final                             |
+| `FAILED`   | The host upload threw or returned `false`; the event remains queued.                             | `SYNCED` after retry              |
+
+All transitions happen in common KMP code. Android and iOS therefore use the same displacement,
+retry, and status logic.
+
+## Backend-controlled policy
+
+The host supplies complete `LocationTrackerPolicy` data through
+`LocationTrackingEngine.updatePolicy(policy)`. The SDK never fetches policy itself.
+
+`canStart` requires all of the following:
+
+- `isTrackingEnabled` is true;
+- `TIME_RANGE` is currently inside `scheduleWindow` (overnight windows are supported);
+- `CHECK_IN_OUT` is currently `isCheckedIn`;
+- no session is already active.
+
+### Time Range
+
+`TIME_RANGE` reconciles immediately and schedules the next local start/end boundary. Android also
+persists a one-shot `AlarmManager` wake-up so an inactive process can reconcile at the next
+boundary. A running Android foreground service survives an ordinary Recents swipe and continues to
+reconcile in its own process.
+
+iOS runs boundary reconciliation while the application remains running/backgrounded. It also
+enables significant-location monitoring as a best-effort re-entry signal after normal system
+termination. It is not an exact scheduled restart mechanism.
+
+### Check-In / Check-Out
+
+Use `requestCheckIn()` and `requestCheckOut()` with a `CheckInOutListener`. The host executes its
+attendance API and returns the updated authoritative policy. Only that policy starts or stops the
+engine; the SDK does not infer a check-in from a UI control.
+
+If a policy update disables tracking, expires the schedule, or checks the user out, the engine
+stops collection, persists an inactive state, and enqueues `Stopped(..., POLICY)`.
+
+## Platform lifecycle
+
+### Android
+
+- `LocationForegroundService` is a **started** foreground service, independent of activity binding.
+  Stop uses an explicit service action, so it works after a recreated UI has no binder.
+- Configuration is persisted before service launch. A null service-restart intent falls back to the
+  stored config; the service uses `START_REDELIVER_INTENT` and does not stop in `onTaskRemoved`.
+- Its persistent notification is updated as fixes are received.
+- The schedule receiver has no exported surface and uses an inexact idle-tolerant alarm; OEM power
+  policies can still delay it. Device testing is required.
+
+### iOS
+
+- A singleton `CLLocationManager` coordinator, not the Compose screen, owns updates.
+- It requires **Always** location authorization, `UIBackgroundModes = location`, background
+  updates enabled, and automatic pausing disabled. Notification authorization is optional and does
+  not block tracking.
+- Standard updates support normal backgrounding. Significant-location monitoring provides only a
+  best-effort re-entry signal after normal system termination.
+
+### Unavoidable operating-system boundary
+
+Normal Android backgrounding/Recents swipe and normal iOS backgrounding are supported. Android
+force-stop from Settings and iOS user force-quit from the app switcher stop tracking; no SDK can
+bypass these operating-system decisions. The user must reopen the app, and restart when policy and
+permission permit it. Developer mode displays this warning.
+
+## Host integration
+
+Register the listener before the engine restores state:
+
+```kotlin
+LocationTrackingEngine.initialize(
+    listener = LocationTrackingListener { event ->
+        // Make the host's authenticated API request here.
+        // Return true only after backend acknowledgement.
+        api.upload(event)
+    },
+    checkInOutListener = CheckInOutListener { action ->
+        api.checkInOut(action) // returns the updated LocationTrackerPolicy
+    },
+    developerMode = BuildConfig.DEBUG,
+)
 ```
 
-### Sending rules
+The sample app deliberately uses a listener that returns `true`; production applications must
+replace it with their own durable, authenticated uploader.
 
-1. The first valid location fix after tracking starts is sent immediately.
-2. Compare every later fix with the **last location successfully sent to the backend**, not the
-   last fix merely received or queued.
-3. If the calculated distance is **less than 50 metres**, do not send the fix.
-4. If the distance is **50 metres or more**, send the fix immediately.
-5. Update the stored last-sent location only after the host backend confirms success.
-6. If the upload fails, do not advance the last-sent location. Retain the failed fix in durable
-   storage so it can be retried.
+## Debugging and verification
 
-### Sync-status reference
+Debug builds expose Engine Stats and a Tracked Locations bottom sheet. It shows the session id,
+last raw and synced positions, next sync time, retry count, status of every recorded location, and
+the force-stop/force-quit limitation.
 
-Both Android and iOS use the same shared `LocationTrackingSession` state machine and therefore
-use these statuses identically:
+Before release, verify on physical devices:
 
-| Status     | Meaning                                                                                                                                                                            | Next transition                                                                                 |
-|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| `PENDING`  | The fix has been accepted for delivery and is waiting for the host uploader/backend acknowledgement.                                                                               | `SYNCED` on a successful acknowledgement; `FAILED` when the uploader throws or returns `false`. |
-| `SYNCED`   | The host uploader confirmed that the backend accepted the event. This location becomes the reference point for the next 50m comparison.                                            | Final for that recorded event.                                                                  |
-| `FILTERED` | The fix was received but was less than 50m from the last successfully synced location, so no backend upload was requested.                                                         | Final for that recorded event.                                                                  |
-| `FAILED`   | The host uploader failed or the backend rejected the event. The event remains in the persistent queue and is retried when the uploader is initialized or another location arrives. | `SYNCED` after a later successful retry; otherwise remains `FAILED`.                            |
-
-### Upload timing and platform consistency
-
-`TrackingConfig.intervalMs` (10 seconds by default) controls how often Android/iOS may request a
-raw platform location fix. It is **not** an upload interval. The shared session code makes the
-same upload decision on both platforms: send the first fix, then send only after a successful
-reference point exists and the new fix is at least 50m away. A vehicle can legitimately travel 50m
-in less than 10 seconds; otherwise a location shown at that cadence should be marked `FILTERED`,
-not uploaded.
-
-Android forwards `FusedLocationProviderClient` fixes and iOS forwards `CLLocationManager` fixes
-into this same session, so filtering, status transitions, persistent retries, and upload scheduling
-are platform-independent. The host uploader is the only platform-specific integration point.
-
-### Minimal backend payload
-
-The host application's upload implementation receives at least:
-
-```text
-latitude: Double
-longitude: Double
-timestampMs: Long (optional, recommended)
-```
-
-The SDK must not contain an HTTP client or backend URL. Instead, the host application supplies the
-upload implementation. That implementation must remain available to background work, rather than
-being a callback that exists only while a Compose screen is alive.
-
-## Required architecture changes for the target flow
-
-- Persist whether tracking is active so the Android foreground service can restore its intent
-  after normal process recreation and the iOS app can restore tracking when it next launches.
-- Persist the last successfully sent latitude, longitude, and timestamp.
-- Persist failed uploads or an upload queue for retry; never treat an unsuccessful upload as sent.
-- Move the distance decision and upload hand-off into the platform background layer: Android
-  foreground service and iOS `CLLocationManager` background execution path.
-- Keep the Compose UI limited to start/stop actions and state presentation.
-
-## Acceptance checklist
-
-- A developer can see why the current implementation loses backend delivery when the app process
-  is destroyed.
-- The 50m rule is explicit: `< 50m` does not send; `>= 50m` sends.
-- Android Recents swipe, Android process death, Android force-stop, iOS backgrounding, iOS
-  termination, and iOS force-quit are described separately.
-- All nonessential tracking-policy features are explicitly deferred.
+- first and final locations are delivered immediately;
+- no movement upload happens before the sync interval;
+- `< 50m` filters and `>= 50m` uploads;
+- a failed listener call stays queued and does not change the last-synced reference;
+- time-range overnight boundaries and check-in/check-out policy changes;
+- normal backgrounding, lock screen, Android Recents swipe, Android service recreation, and iOS
+  background/suspension;
+- Android force-stop and iOS force-quit show the documented limitation.

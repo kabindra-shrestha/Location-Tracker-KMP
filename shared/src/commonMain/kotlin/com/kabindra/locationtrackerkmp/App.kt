@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupPositionProvider
 import com.kabindra.locationtracker.LocationTracker
+import com.kabindra.locationtracker.LocationTrackingEngine
 import com.kabindra.locationtracker.createLocationTracker
 import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.ScheduleWindow
@@ -113,7 +114,7 @@ private fun LocationTrackingScreen() {
     var trackingMode by remember { mutableStateOf(TrackingMode.TIME_RANGE) }
     var isCheckedIn by remember { mutableStateOf(false) }
     var minDistanceThreshold by remember { mutableStateOf(50f) }
-    var syncIntervalMinutes by remember { mutableStateOf(1) } // 1 min default for demo/testing
+    var syncIntervalMinutes by remember { mutableStateOf(5) }
 
     // In production the host app receives this policy from its backend.
     val policy = remember(
@@ -139,10 +140,7 @@ private fun LocationTrackingScreen() {
     }
 
     LaunchedEffect(policy) {
-        val stoppedByPolicy = LocationTrackingSession.updatePolicy(policy)
-        if (stoppedByPolicy) {
-            tracker.stop()
-        }
+        LocationTrackingEngine.updatePolicy(policy)
     }
 
     LaunchedEffect(Unit) {
@@ -306,8 +304,23 @@ private fun LocationTrackingScreen() {
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("Tracking Session Active: ${sessionState.isActive}")
+                Text("Session ID: ${sessionState.sessionId ?: "None"}")
                 Text("Pending Backend Events: ${sessionState.pendingEventCount}")
+                Text("Retry Queue: ${sessionState.pendingEventCount}")
+                Text("Last Raw Fix: ${sessionState.lastKnownLocation ?: "None"}")
                 Text("Last Successful Backend Location: ${sessionState.lastSuccessfullyDeliveredLocation ?: "None"}")
+                Text(
+                    "Last Sync: ${
+                        sessionState.lastSyncTimestampMs.takeIf { it > 0L }
+                            ?.let(::formatTrackingTimestamp) ?: "None"
+                    }",
+                )
+                Text(
+                    "Next Sync: ${
+                        sessionState.nextSyncTimestampMs.takeIf { it > 0L }
+                            ?.let(::formatTrackingTimestamp) ?: "Not scheduled"
+                    }",
+                )
                 sessionState.lastError?.let {
                     Text(
                         "Last Sync Error: $it",
@@ -323,6 +336,12 @@ private fun LocationTrackingScreen() {
                     ) {
                         Text("Tracked Locations")
                     }
+                    Text(
+                        "Platform boundary: normal backgrounding and Android Recents swipe are supported. " +
+                                "Android force-stop and iOS force-quit require reopening the app and starting again.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -540,7 +559,7 @@ private fun TrackedLocationsBottomSheet(
                 ) {
                     items(
                         filteredLocations,
-                        key = { "${it.eventKind}-${it.location.timestampMs}" }) { entry ->
+                        key = { it.id }) { entry ->
                         DebugLocationCard(entry)
                     }
                 }
@@ -605,7 +624,9 @@ suspend fun requestPermissionThenStartTracking(
     val foregroundStatus = permissionController.requestForeground()
     if (foregroundStatus == LocationPermissionStatus.Denied) return false
 
-    if (!permissionController.requestNotifications()) return false
+    // Android's foreground-service notification and iOS notifications are useful user feedback,
+    // but neither permission result is allowed to block the location lifecycle.
+    permissionController.requestNotifications()
 
     val backgroundStatus = permissionController.requestBackground()
     if (backgroundStatus != LocationPermissionStatus.GrantedAlways) return false

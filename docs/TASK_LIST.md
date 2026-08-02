@@ -19,21 +19,21 @@
 
 - [x] Implement `LocationTrackerPolicy` model (defaults for `isTrackingEnabled`, `trackingMode`,
   `scheduleWindow`, `50m` distance threshold, `5-min` sync interval)
-- [x] Implement `LocationSyncListener` interface (decoupled sync callback triggered by SDK for host
-  app network dispatch)
+- [x] Implement `LocationTrackingListener` interface (typed, decoupled host callback for backend
+  delivery)
 - [x] Implement `DistanceFilter` component to suppress location updates if distance moved is <
   threshold (e.g. 50 meters)
 - [x] Implement `TrackingScheduleEvaluator` component to validate active tracking window (e.g., 9:
   00 - 17:00 or Check-In status)
-- [x] Implement `LocationSyncManager` inside SDK to buffer 50m-filtered locations and periodically
-  invoke parent app `LocationSyncListener`
+- [x] Implement persistent `LocationTrackingSession` / `LocationTrackingEngine` to queue events,
+  apply the interval-based 50m decision, and invoke `LocationTrackingListener`
 
 ## Phase 4: UI & Host App Integration
 
 - [x] Update `App.kt` Compose UI to handle full 2-step permission flow (Foreground ->
   Notification -> Background ->
   Start Tracking)
-- [x] Implement host app API trigger callback (`LocationSyncListener`) in `App.kt` to simulate
+- [x] Implement host app API trigger callback (`LocationTrackingListener`) in `App.kt` to simulate
   network transmission
 - [x] Implement real-time tracking dashboard showing permission status, tracking state, active mode,
   last tracked location, displacement filter stats, and sync callback logs

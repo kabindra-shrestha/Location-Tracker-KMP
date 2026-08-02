@@ -1,4 +1,6 @@
-- [x] Refactor root `README.md` for Implementation App focus
-- [x] Create `location-tracker/README.md` for Library focus
-- [x] Create `location-tracker/TECHNICAL_DOCS.md` with deep-dive details
-- [x] Verify all documentation and links
+- [x] Add `id` field to `TrackedLocationDebugEntry` in `TrackingSession.kt`
+- [x] Update ID generation in `LocationTrackingSession`
+- [x] Update serialization in `TrackingSessionStore.android.kt`
+- [x] Update serialization in `TrackingSessionStore.ios.kt`
+- [x] Update `LazyColumn` key in `App.kt`
+- [x] Verify fix on Android and iOS

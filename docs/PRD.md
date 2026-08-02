@@ -107,9 +107,9 @@ data class ScheduleWindow(
     val endMinute: Int
 )
 
-/** Callback supplied by parent app to handle API transmission */
-fun interface LocationSyncListener {
-    suspend fun onSyncLocations(locations: List<TrackedLocation>)
+/** Callback supplied by the host app; return true only after backend acknowledgement. */
+fun interface LocationTrackingListener {
+    suspend fun onTrackingEvent(event: LocationTrackingEvent): Boolean
 }
 ```
 

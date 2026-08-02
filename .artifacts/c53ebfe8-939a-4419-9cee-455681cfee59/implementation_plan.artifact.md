@@ -1,30 +1,34 @@
-# Implementation Plan - README & Documentation Improvements
+# Implementation Plan - Fix Duplicate Keys in Tracked Locations List
 
-Maintain two distinct README files for the `location-tracker` library and the implementation app, detailing technologies, implementation details, flows, and features.
+Address the `IllegalArgumentException` caused by duplicate keys in the `LazyColumn` of the `TrackedLocationsBottomSheet`. This occurs when multiple location events share the same timestamp and kind.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Schema Change in Persistence**
+> I am adding a unique `id` field to the `TrackedLocationDebugEntry` data class. I will update the serialization logic in `TrackingSessionStore` to handle this new field. Existing persisted sessions might fail to decode individual debug entries (falling back to null/empty) until a new session is started, but the overall app state will remain stable.
 
 ## Proposed Changes
 
-### Documentation
+### [location-tracker](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker)
 
-#### [NEW] [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/README.md)
-Create a comprehensive README for the library module:
-- **Technologies Used**: Kotlin Multiplatform, Compass, FusedLocationProviderClient (Android), CLLocationManager (iOS).
-- **Architecture**: Native background tracking (Foreground Service on Android, Background updates on iOS) with shared logic for filtering and state.
-- **Library Flow**: Details on `LocationTracker` initialization, starting/stopping, and the `LocationTrackingSession` state machine.
-- **Features**: Background tracking, distance filtering, schedule-based tracking, check-in mode, and durable persistence.
+#### [MODIFY] [TrackingSession.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/commonMain/kotlin/com/kabindra/locationtracker/session/TrackingSession.kt)
+- Add `val id: String` to `TrackedLocationDebugEntry`.
+- Update `markStarted`, `onLocation`, `stop`, and `evaluateLatestLocationForSync` to generate unique IDs for each debug entry (e.g., `"${eventKind.name}-${timestampMs}-${randomSuffix}"`).
 
-#### [MODIFY] [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/README.md)
-Refactor the root README to focus on the Implementation App:
-- **Technologies Used**: Compose Multiplatform, Voyager (if applicable, need to check), Koin/Dependency Injection (need to check), location-tracker library.
-- **App Flow**: Dashboard overview, permission request sequence, policy configuration, and developer tools usage.
-- **Implementation Details**: How `shared` and `androidApp`/`iosApp` interact with the library.
-- **Features**: Real-time dashboard, policy toggles, persistent session viewing, and coordinate copying for testing.
+#### [MODIFY] [TrackingSessionStore.android.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/androidMain/kotlin/com/kabindra/locationtracker/session/TrackingSessionStore.android.kt) & [TrackingSessionStore.ios.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/iosMain/kotlin/com/kabindra/locationtracker/session/TrackingSessionStore.ios.kt)
+- Update `encode` and `toDebugEntry` to include the `id` field.
 
-#### [NEW] [TECHNICAL_DOCS.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/TECHNICAL_DOCS.md) (Optional/If needed)
-Extract technical implementation details from `docs/` into the library's module for better locality if appropriate.
+### [shared](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared)
+
+#### [MODIFY] [App.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared/src/commonMain/kotlin/com/kabindra/locationtrackerkmp/App.kt)
+- Update the `LazyColumn` key to use the new `id` field: `key = { it.id }`.
 
 ## Verification Plan
 
 ### Manual Verification
-- Review the generated README files to ensure they are accurate and provide clear instructions for both library consumers and app developers.
-- Verify that all links to files and directories within the READMEs are correct.
+- Deploy to an Android device.
+- Start tracking and generate several location fixes.
+- Open the "Tracked Locations" bottom sheet and verify it no longer crashes.
+- Verify that filtering and scrolling work smoothly with the new unique keys.
+- Repeat for iOS.
