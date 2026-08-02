@@ -25,6 +25,18 @@ are evaluated only at the policy sync interval (5 minutes by default): `< 50m` i
 `>= 50m` produces `LocationUpdated`, and only a successful listener response advances the sync
 reference. `Started` and `Stopped` bypass the interval and distance filter.
 
+## Policy safety rules
+
+`ScheduleEvaluator` is the one shared policy gate for Android and iOS. A session can start only
+when its backend master flag is enabled, the current mode is eligible, and no session is already
+active. `TIME_RANGE` windows are start-inclusive/end-exclusive; a missing window fails closed.
+`CHECK_IN_OUT` is eligible only while the backend policy says `isCheckedIn = true`.
+
+The host calls `LocationTrackingEngine.updatePolicy(policy)` whenever backend state changes. A
+policy that becomes ineligible stops an active session with `Stopped(..., POLICY)`; the engine then
+updates the next schedule boundary. The sample app's switches simulate this input and are not a
+backend implementation.
+
 ## Platform ownership
 
 - **Android:** a started `LocationForegroundService` owns FusedLocationProviderClient updates,

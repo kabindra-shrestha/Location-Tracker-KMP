@@ -1,128 +1,121 @@
 # Location Tracker Library
 
-A Kotlin Multiplatform library for continuous foreground **and background** location tracking on Android and iOS.
+A Kotlin Multiplatform library for persistent, policy-controlled location tracking on Android and
+iOS. The host owns authentication and HTTP; the library owns platform collection, durable session
+state, policy evaluation, filtering, and event retry.
 
-## Why this exists
+## What it does
 
-While excellent KMP location toolkits like [Compass](https://github.com/jordond/compass) exist, they often focus on foreground use cases. This library extends these capabilities by implementing **continuous background tracking natively**:
-- **Android**: An explicit Foreground Service (`FusedLocationProviderClient` + `foregroundServiceType="location"`).
-- **iOS**: `CLLocationManager` configured with `allowsBackgroundLocationUpdates`.
+- Android collection is owned by a started `LocationForegroundService`.
+- iOS collection is owned by a singleton `CLLocationManager` coordinator.
+- The shared engine persists the active policy/configuration, session id, latest raw fix, last
+  successfully synced fix, next sync deadline, retry queue, and debug history.
+- The default collection profile is a 30-second request interval with a 20m platform displacement.
+  Ongoing backend delivery is policy-controlled: 5-minute interval and 50m threshold by default.
+- `Started` and `Stopped` locations are immediate; only `LocationUpdated` uses the periodic 50m
+  decision.
 
-## Core Technologies
-- **Kotlin Multiplatform (KMP)**
-- **Compose Multiplatform** (for UI-related helpers)
-- **Compass**: Used for one-shot current location and permission management infrastructure.
-- **Google Play Services (Location)**: Powering the Android implementation.
-- **CoreLocation**: Powering the iOS implementation.
+Normal backgrounding, screen lock, and Android Recents removal are supported. Android force-stop
+and iOS user force-quit are operating-system boundaries and require reopening the app.
 
-## Features
-- ✅ **Background Persistence**: Tracking continues even if the app is minimized or the screen is locked.
-- ✅ **Distance Filtering**: Built-in Haversine distance filtering (default 50m) to save battery and bandwidth.
-- ✅ **Tracking Modes**: Support for Schedule-based (Time Range) and Attendance-based (Check-in/out) tracking.
-- ✅ **Durable Session**: In-memory and persistent state management for location synchronization.
-- ✅ **Retry Mechanism**: Automatically retries failed backend syncs.
+## Host initialization
 
-## Setup
+Initialize before creating any Compose UI or restoring a platform collector. Register the uploader
+first, because a restored retry event may be delivered immediately.
 
-### 1. Add the GitHub Packages repository
-`settings.gradle.kts`:
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            url = uri("https://maven.pkg.github.com/<owner>/location-tracker-kmp")
-            credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                password = providers.gradleProperty("gpr.token").orNull
-            }
-        }
-    }
-}
-```
-
-### 2. Add the dependency
-```kotlin
-commonMain.dependencies {
-    implementation("com.kabindra:location-tracker:0.1.0")
-}
-```
-
-### 3. Initialize on Android
 ```kotlin
 class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         LocationTrackerInit.initialize(this)
+        LocationTrackingEngine.initialize(
+            listener = LocationTrackingListener { event ->
+                // Call the host application's authenticated API.
+                // Return true only after the backend accepts this exact event.
+                trackingApi.upload(event)
+            },
+            checkInOutListener = CheckInOutListener { action ->
+                // Return the updated, complete backend policy.
+                attendanceApi.perform(action)
+            },
+            developerMode = BuildConfig.DEBUG,
+        )
     }
 }
 ```
 
-## Usage
+On iOS, make the equivalent engine initialization from the `App` initializer, before constructing
+the Compose view controller. The sample exposes `initializeLocationTracking` for that purpose.
+
+## Applying backend policy
+
+The backend is the only policy source. Supply a complete `LocationTrackerPolicy` whenever it is
+fetched or changed:
 
 ```kotlin
-@Composable
-fun TrackingScreen() {
-    val permissionController = rememberLocationPermissionController()
-    val tracker = remember { createLocationTracker() }
-    val scope = rememberCoroutineScope()
-    val state by tracker.state.collectAsState()
-
-    LaunchedEffect(tracker) {
-        tracker.locations.collect { location ->
-            // Use location fix
-        }
-    }
-
-    Button(onClick = {
-        scope.launch {
-            val foreground = permissionController.requestForeground()
-            if (foreground != LocationPermissionStatus.Granted) return@launch
-
-            val background = permissionController.requestBackground()
-            // Recommendation: Check for background status if persistence is required
-
-            tracker.start(TrackingConfig(
-                intervalMs = 10_000,
-                minUpdateDistanceMeters = 20f,
-                priority = LocationPriority.HIGH_ACCURACY,
-                notificationSmallIconResId = R.drawable.ic_notification // Android REQUIRED
-            ))
-        }
-    }) {
-        Text("Start Tracking")
-    }
-}
+LocationTrackingEngine.updatePolicy(
+    LocationTrackerPolicy(
+        isTrackingEnabled = true,
+        trackingMode = TrackingMode.TIME_RANGE,
+        scheduleWindow = ScheduleWindow(9, 0, 17, 0),
+        minDistanceThresholdMeters = 50f,
+        syncIntervalMinutes = 5,
+    ),
+)
 ```
 
-## Platform Setup
+`TIME_RANGE` is start-inclusive/end-exclusive: `09:00–17:00` runs at 09:00 and stops at 17:00.
+Overnight windows work. A `TIME_RANGE` policy with no `scheduleWindow` fails closed and cannot
+start tracking. In `CHECK_IN_OUT`, call `requestCheckIn()` / `requestCheckOut()`; the host callback
+must return the authoritative updated policy.
 
-### Android Manifest
-Permissions are merged automatically. You must provide a notification icon for the foreground service.
+After location permission is granted, start a policy-authorized session with:
 
-### iOS Info.plist
-```xml
-<key>UIBackgroundModes</key>
-<array>
-    <string>location</string>
-</array>
-<key>NSLocationWhenInUseUsageDescription</key>
-<string>Description for foreground tracking</string>
-<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-<string>Description for background tracking</string>
+```kotlin
+val started = LocationTrackingEngine.start(
+    policy = policyFromBackend,
+    config = TrackingConfig(
+        intervalMs = 30_000L,
+        minUpdateDistanceMeters = 20f,
+        priority = LocationPriority.HIGH_ACCURACY,
+        notificationSmallIconResId = R.drawable.ic_notification,
+    ),
+)
 ```
 
-## Internal Synchronization Flow
+`start` returns `false` when policy or platform permissions do not permit collection. The Compose
+screen should render button state from `LocationTrackingSession.state`; it must not own syncing.
 
-The library handles synchronization state through `LocationTrackingSession`:
+## Backend events and statuses
+
+The host receives `LocationTrackingEvent.Started`, `LocationUpdated`, and `Stopped` events. Every
+location contains latitude, longitude, timestamp, and optional accuracy/speed/bearing/altitude.
 
 | Status | Meaning |
-| :--- | :--- |
-| `PENDING` | Fix accepted, waiting for backend acknowledgement. |
-| `SYNCED` | Backend confirmed success. Reference point updated. |
-| `FILTERED` | Fix dropped due to distance threshold (e.g., < 50m moved). |
-| `FAILED` | Upload failed; fix retained in queue for retry. |
+| --- | --- |
+| `PENDING` | Awaiting a sync decision or backend acknowledgement. |
+| `SYNCED` | The host confirmed delivery; this becomes the new distance reference. |
+| `FILTERED` | At the sync interval, movement was `< 50m`; no upload occurred. |
+| `FAILED` | Upload failed or was rejected; the durable event stays queued for retry. |
 
-## Technical Documentation
-For a deep dive into the native implementations and synchronization logic, see **[TECHNICAL_DOCS.md](TECHNICAL_DOCS.md)**.
+Exactly 50m is delivered. Only a successful host response advances the 50m reference.
+
+## Platform setup
+
+### Android
+
+The library manifest merges fine/coarse/background location, foreground-service location, and
+notification permissions. The host must supply a valid notification small icon. A foreground and
+background location grant is required for reliable automatic/background starts.
+
+### iOS
+
+`Info.plist` must declare `UIBackgroundModes` with `location`, plus When In Use and Always location
+usage descriptions. The user must grant **Always** location authorization for background delivery.
+Notification permission is optional on iOS.
+
+## More documentation
+
+- [Production lifecycle and host flow](../docs/LOCATION_TRACKING_FLOW.md)
+- [Internal architecture](TECHNICAL_DOCS.md)
+- [Test commands and device scenarios](../docs/TESTING.md)

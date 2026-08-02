@@ -21,17 +21,22 @@ data class ScheduleWindow(
         require(endMinute in 0..59) { "endMinute must be between 0 and 59" }
     }
 
-    /** Validates if a given time (hour:minute) falls within the schedule window. */
+    /**
+     * Validates whether a local time is in this daily window. The start is inclusive and the end
+     * is exclusive: a 09:00–17:00 policy is active at 09:00 and inactive at 17:00. A window that
+     * crosses midnight (for example 22:00–06:00) is supported; equal endpoints are zero length.
+     */
     fun isWithinWindow(currentHour: Int, currentMinute: Int): Boolean {
         val currentMinutes = currentHour * 60 + currentMinute
         val startMinutes = startHour * 60 + startMinute
         val endMinutes = endHour * 60 + endMinute
 
-        return if (endMinutes >= startMinutes) {
-            currentMinutes in startMinutes..endMinutes
+        return if (endMinutes > startMinutes) {
+            currentMinutes in startMinutes until endMinutes
         } else {
-            // Overnight shift window (e.g. 22:00 to 06:00)
-            currentMinutes >= startMinutes || currentMinutes <= endMinutes
+            // Overnight shift (for example 22:00–06:00). Equal endpoints are zero length.
+            endMinutes != startMinutes &&
+                (currentMinutes >= startMinutes || currentMinutes < endMinutes)
         }
     }
 }

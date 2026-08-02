@@ -143,8 +143,7 @@ object LocationTrackingSession {
 
     fun canStart(): Boolean {
         val now = currentLocalScheduleTime()
-        return !_state.value.isActive &&
-                ScheduleEvaluator.shouldTrackLocation(policy, now.hour, now.minute)
+        return ScheduleEvaluator.canStart(policy, now.hour, now.minute, _state.value.isActive)
     }
 
     fun markStarted(config: com.kabindra.locationtracker.model.TrackingConfig) {

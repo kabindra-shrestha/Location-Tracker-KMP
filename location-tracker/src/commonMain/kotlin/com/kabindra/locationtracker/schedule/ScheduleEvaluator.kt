@@ -23,7 +23,9 @@ object ScheduleEvaluator {
         return when (policy.trackingMode) {
             TrackingMode.TIME_RANGE -> {
                 val window = policy.scheduleWindow
-                window == null || window.isWithinWindow(currentHour, currentMinute)
+                // A backend TIME_RANGE policy without a window is malformed. Fail closed rather
+                // than silently treating it as an all-day tracking authorization.
+                window?.isWithinWindow(currentHour, currentMinute) == true
             }
 
             TrackingMode.CHECK_IN_OUT -> {
@@ -32,10 +34,18 @@ object ScheduleEvaluator {
         }
     }
 
+    /** One deterministic rule for Start-button availability and engine-start eligibility. */
+    fun canStart(
+        policy: LocationTrackerPolicy,
+        currentHour: Int,
+        currentMinute: Int,
+        isSessionActive: Boolean,
+    ): Boolean = !isSessionActive && shouldTrackLocation(policy, currentHour, currentMinute)
+
     /**
      * Returns the delay to the next local TIME_RANGE state transition. The evaluation is minute
-     * based because the backend policy itself contains hour/minute boundaries. At an inclusive end
-     * minute we wait one minute before re-evaluating, so a 09:00–17:00 shift stops just after 17:00.
+     * based because the backend policy itself contains hour/minute boundaries. Schedule windows
+     * are start-inclusive/end-exclusive, so a 09:00–17:00 shift stops at 17:00.
      */
     fun millisUntilNextTransition(
         window: com.kabindra.locationtracker.model.ScheduleWindow,
@@ -50,7 +60,7 @@ object ScheduleEvaluator {
         else (start - now + MINUTES_PER_DAY) % MINUTES_PER_DAY
 
         if (minutes == 0) {
-            minutes = if (active && start != end) 1 else MINUTES_PER_DAY
+            minutes = MINUTES_PER_DAY
         }
         return minutes * MILLIS_PER_MINUTE
     }

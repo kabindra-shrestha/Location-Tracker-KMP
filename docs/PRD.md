@@ -1,127 +1,62 @@
-# Product Requirements Document (PRD): KMP/CMP Background Location Tracker
+# Product Requirements: KMP Background Location Tracker
 
-## 1. Overview & Problem Statement
+## Goal
 
-The KMP Location Tracker SDK provides robust, continuous, background-capable location tracking
-across Android and iOS platforms built with Kotlin Multiplatform (KMP) and Compose Multiplatform (
-CMP).
+Provide a KMP library that records locations reliably during normal Android/iOS background use,
+applies backend-controlled eligibility rules, and hands typed delivery events to the host app. The
+SDK must not implement HTTP or make policy decisions from UI state.
 
-Currently, the application UI does not trigger permission dialogs or start the background location
-tracking engine due to unimplemented button click handlers and missing iOS permission key
-definitions in `Info.plist`. Additionally, enterprise requirements (backend control toggles,
-schedule/attendance windows, distance displacement filtering, and periodic sync dispatching) must be
-fully specified and implemented in an decoupled SDK architecture.
+## Product requirements
 
----
+### Collection and lifecycle
 
-## 2. Core Requirements
+- Capture latitude, longitude, timestamp, accuracy, and available speed, bearing, and altitude.
+- Use a started Android location foreground service that is independent of the activity binding and
+  does not stop when the task is removed from Recents.
+- Use an iOS app-lifecycle `CLLocationManager` configured for Always permission, background updates,
+  and no automatic pausing.
+- Restore persisted session state and the host upload callback before Compose renders.
+- Treat Android force-stop and iOS user force-quit as unavoidable limits; reopening is required.
 
-### Requirement 1: Core Location Tracking
+### Backend policy
 
-- Continuously obtain high-accuracy GPS / network location updates (`latitude`, `longitude`,
-  `accuracy`, `speed`, `bearing`, `altitude`, `timestamp`).
-- Support configurable accuracy levels (`HIGH_ACCURACY`, `BALANCED`, `LOW_POWER`).
+The host supplies a complete `LocationTrackerPolicy` through
+`LocationTrackingEngine.updatePolicy(policy)`. The policy is persisted locally and is the sole
+source of truth for tracking eligibility.
 
-### Requirement 2: Background Location Tracking
+| Mode | Start rule | Stop rule |
+| --- | --- | --- |
+| `TIME_RANGE` | Backend master flag is enabled and local time is inside `scheduleWindow`. | The window ends, the master flag is disabled, or policy is replaced with an ineligible value. |
+| `CHECK_IN_OUT` | Backend master flag is enabled and the returned policy says `isCheckedIn = true`. | The returned policy says checked out or master flag is disabled. |
 
-- **Android**: Execute inside an explicit Foreground Service (`LocationForegroundService`)
-  configured with `android:foregroundServiceType="location"`. Continue capturing location fixes even
-  when the app is minimized, screen is locked, or app is removed from recent tasks.
-- **iOS**: Utilize `CLLocationManager` with `allowsBackgroundLocationUpdates = true`,
-  `pausesLocationUpdatesAutomatically = false`, and background mode `location` configured in
-  `Info.plist`.
+Time windows are start-inclusive/end-exclusive: `09:00–17:00` stops at 17:00. Overnight windows
+are supported. A `TIME_RANGE` policy with no window is malformed and fails closed.
 
-### Requirement 3: Backend Policy Model (`LocationTrackerPolicy`)
+### Synchronization
 
-- Define a policy configuration model initialized with sensible defaults in the SDK and
-  supplied/overridden by the host application upon SDK start.
-- `isTrackingEnabled: Boolean` (default `true`): If `false`, immediately suspend location
-  collection, stop background services, and remove tracking notifications.
+- Default raw collection: 30 seconds and 20m platform displacement.
+- Default backend decision: every 5 minutes and at least 50m from the last **successfully synced**
+  location.
+- Send `Started(firstLocation)` immediately; send `Stopped(lastKnownLocation, reason)` immediately.
+- At each interval, mark movement `< 50m` as `FILTERED`; queue `>= 50m` as `LocationUpdated`.
+- Retain failures and retry them without advancing the last-synced reference.
+- The host returns `true` only after its API acknowledges the typed event.
 
-### Requirement 4: Notification & Status Indicator
+### Permissions and indicators
 
-- **Android**: Display an ongoing, non-dismissible notification while background tracking is active.
-  Show current tracking state and total points tracked.
-- **iOS**: Enable `showsBackgroundLocationIndicator = true` so the blue status bar banner / dynamic
-  island indicator is visible when location updates are captured in the background.
+- Android requires fine/coarse, background location, and a persistent foreground-service
+  notification. Notification permission is requested for user visibility but does not block the
+  tracking lifecycle.
+- iOS requires When In Use then Always location authorization and the `location` background mode.
+  Its background-location indicator is used; notification permission is optional.
 
-### Requirement 5: Tracking Modes (Schedule vs Check-In/Out)
+## Acceptance criteria
 
-The system must support two operating modes provided via `LocationTrackerPolicy`:
-
-1. **Time Range Schedule Mode**: Automatically activate location tracking during specified daily
-   time windows (e.g. 09:00 - 17:00 or 10:00 - 18:00). Automatically pause outside this window.
-2. **Attendance / Check-In Check-Out Mode**: Track location only while the user is actively
-   checked-in (`isCheckedIn: Boolean`). Tracking starts upon Check-In and halts immediately upon
-   Check-Out.
-
-### Requirement 6: Distance Threshold Filtering (50m Displacement)
-
-- To conserve battery and backend storage/bandwidth, perform displacement filtering inside the SDK.
-- Compare each new location fix against the **last reported/sent location point**.
-- If the calculated distance between the new fix and the last reported position is **less than the
-  threshold** (default 50 meters, or policy-configured `minDistanceThresholdMeters`), **do not
-  send/queue** the update.
-
-### Requirement 7: Periodic Sync Callback (Decoupled Network API)
-
-- **Architecture Constraint**: The SDK MUST NOT handle network HTTP requests directly or contain
-  backend API client logic. Network APIs reside entirely in the parent host application.
-- The SDK buffers locations passing the 50m displacement filter and invokes a callback / listener
-  interface (`onSyncLocations: suspend (List<TrackedLocation>) -> Unit`) supplied by the host
-  application at configurable time intervals (e.g. every 4m, 5m, 10m).
-- Host application receives batch location fixes in the callback and dispatches them to its own
-  backend server.
-
-### Requirement 8: Explicit 2-Step Permission Request Flow
-
-- **Foreground Request**: Prompt user for `ACCESS_FINE_LOCATION` & `ACCESS_COARSE_LOCATION` on
-  Android, `WhenInUse` on iOS.
-- **Background Upgrade Request**: Prompt user for `ACCESS_BACKGROUND_LOCATION` on Android (guiding
-  user to system settings if Android 11+), `Always` authorization on iOS.
-- **Android Notification Permission**: Request `POST_NOTIFICATIONS` on Android 13+ (API 33+) before
-  launching the foreground service.
-
----
-
-## 3. Architecture & Data Models
-
-### Policy & Configuration Models (`location-tracker`)
-
-```kotlin
-data class LocationTrackerPolicy(
-    val isTrackingEnabled: Boolean = true,
-    val trackingMode: TrackingMode = TrackingMode.TIME_RANGE,
-    val scheduleWindow: ScheduleWindow? = ScheduleWindow(startHour = 9, startMinute = 0, endHour = 17, endMinute = 0),
-    val isCheckedIn: Boolean = false,
-    val minDistanceThresholdMeters: Float = 50.0f,
-    val syncIntervalMinutes: Int = 5
-)
-
-enum class TrackingMode { TIME_RANGE, CHECK_IN_OUT }
-
-data class ScheduleWindow(
-    val startHour: Int,
-    val startMinute: Int,
-    val endHour: Int,
-    val endMinute: Int
-)
-
-/** Callback supplied by the host app; return true only after backend acknowledgement. */
-fun interface LocationTrackingListener {
-    suspend fun onTrackingEvent(event: LocationTrackingEvent): Boolean
-}
-```
-
----
-
-## 4. Platform Specifications & Permissions
-
-- **Android `AndroidManifest.xml`**:
-    - `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`
-    - `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS`
-- **iOS `Info.plist`**:
-    - `NSLocationWhenInUseUsageDescription`
-    - `NSLocationAlwaysAndWhenInUseUsageDescription`
-    - `NSLocationAlwaysUsageDescription`
-    - `UIBackgroundModes` array containing `location`
+- Start is disabled while a persisted session is active or current backend policy is ineligible.
+- Updating policy stops an active session when the master flag, schedule, or check-in state becomes
+  ineligible.
+- Android and iOS share the same 50m, status, retry, and policy evaluation logic.
+- Debug builds show persisted engine state and all current-session location records.
+- Common tests cover policy gates, schedule boundaries, overnight schedules, and displacement rules.
+- Device verification covers backgrounding, lock screen, Android Recents removal, iOS suspension,
+  retry, and force-stop/force-quit limitation messaging.

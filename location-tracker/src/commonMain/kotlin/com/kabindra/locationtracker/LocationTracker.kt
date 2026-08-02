@@ -7,14 +7,16 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Continuous, background-capable location tracking.
+ * Presentation-facing view of continuous, background-capable location tracking.
  *
  * - Android: backed by a bound [android.app.Service] running as a foreground
  *   service with `foregroundServiceType="location"`, using FusedLocationProviderClient.
  * - iOS: backed by CLLocationManager with `allowsBackgroundLocationUpdates = true`.
  *
- * Location permission MUST already be granted before calling [start] — use
- * [com.kabindra.locationtracker.permission.LocationPermissionController] first.
+ * Prefer [LocationTrackingEngine] for application initialization, backend-policy updates, and
+ * persistent start/stop commands. This interface only exposes live fixes and platform state to a
+ * screen. Location permission MUST already be granted before calling [start], and a complete
+ * backend policy must already have been applied through [LocationTrackingEngine.updatePolicy].
  *
  * This interface intentionally does NOT expose one-shot "get current location"
  * — for that, use [com.kabindra.locationtracker.compass.CompassCurrentLocation],
@@ -29,9 +31,8 @@ interface LocationTracker {
     val state: StateFlow<TrackingState>
 
     /**
-     * Starts (or restarts with a new config) continuous location tracking.
-     * Safe to call again while already running — the platform implementation
-     * will update the active request in place rather than stacking listeners.
+     * Starts continuous tracking using the persisted policy already applied to
+     * [LocationTrackingEngine]. A policy-ineligible or already-active session is not restarted.
      */
     fun start(config: TrackingConfig = TrackingConfig())
 

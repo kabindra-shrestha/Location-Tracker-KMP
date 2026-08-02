@@ -106,7 +106,8 @@ The host supplies complete `LocationTrackerPolicy` data through
 `canStart` requires all of the following:
 
 - `isTrackingEnabled` is true;
-- `TIME_RANGE` is currently inside `scheduleWindow` (overnight windows are supported);
+- `TIME_RANGE` has a non-null `scheduleWindow` and the local time is inside it (overnight windows
+  are supported); a missing window fails closed;
 - `CHECK_IN_OUT` is currently `isCheckedIn`;
 - no session is already active.
 
@@ -120,6 +121,9 @@ reconcile in its own process.
 iOS runs boundary reconciliation while the application remains running/backgrounded. It also
 enables significant-location monitoring as a best-effort re-entry signal after normal system
 termination. It is not an exact scheduled restart mechanism.
+
+Schedule windows are start-inclusive/end-exclusive: a `09:00–17:00` policy starts at 09:00 and is
+no longer eligible at 17:00. This avoids an unintended extra minute of tracking at the end boundary.
 
 ### Check-In / Check-Out
 

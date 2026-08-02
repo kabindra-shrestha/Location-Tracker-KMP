@@ -28,7 +28,7 @@ class PolicyComponentsTest {
             scheduleWindow = ScheduleWindow(9, 0, 17, 0),
         )
         assertTrue(ScheduleEvaluator.shouldTrackLocation(scheduledPolicy, 9, 0))
-        assertFalse(ScheduleEvaluator.shouldTrackLocation(scheduledPolicy, 18, 0))
+        assertFalse(ScheduleEvaluator.shouldTrackLocation(scheduledPolicy, 17, 0))
         assertFalse(
             ScheduleEvaluator.shouldTrackLocation(
                 scheduledPolicy.copy(isTrackingEnabled = false),
@@ -52,6 +52,49 @@ class PolicyComponentsTest {
     }
 
     @Test
+    fun backendPolicyOnlyEnablesStartForAnEligibleInactiveSession() {
+        val timeRange = LocationTrackerPolicy(
+            trackingMode = TrackingMode.TIME_RANGE,
+            scheduleWindow = ScheduleWindow(9, 0, 17, 0),
+        )
+        assertTrue(ScheduleEvaluator.canStart(timeRange, 9, 0, isSessionActive = false))
+        assertFalse(ScheduleEvaluator.canStart(timeRange, 17, 0, isSessionActive = false))
+        assertFalse(ScheduleEvaluator.canStart(timeRange, 10, 0, isSessionActive = true))
+        assertFalse(
+            ScheduleEvaluator.canStart(
+                timeRange.copy(isTrackingEnabled = false),
+                10,
+                0,
+                isSessionActive = false,
+            )
+        )
+
+        val checkInOut = timeRange.copy(
+            trackingMode = TrackingMode.CHECK_IN_OUT,
+            isCheckedIn = true,
+        )
+        assertTrue(ScheduleEvaluator.canStart(checkInOut, 2, 0, isSessionActive = false))
+        assertFalse(
+            ScheduleEvaluator.canStart(
+                checkInOut.copy(isCheckedIn = false),
+                2,
+                0,
+                isSessionActive = false,
+            )
+        )
+    }
+
+    @Test
+    fun timeRangeWithoutWindowFailsClosed() {
+        val malformedTimeRange = LocationTrackerPolicy(
+            trackingMode = TrackingMode.TIME_RANGE,
+            scheduleWindow = null,
+        )
+        assertFalse(ScheduleEvaluator.shouldTrackLocation(malformedTimeRange, 12, 0))
+        assertFalse(ScheduleEvaluator.canStart(malformedTimeRange, 12, 0, isSessionActive = false))
+    }
+
+    @Test
     fun scheduleTransitionDelayHandlesDaytimeAndOvernightWindows() {
         val daytime = ScheduleWindow(9, 0, 17, 0)
         assertEquals(
@@ -62,9 +105,9 @@ class PolicyComponentsTest {
             8 * 60 * 60_000L,
             ScheduleEvaluator.millisUntilNextTransition(daytime, 9, 0),
         )
-        // End-minute is inclusive; the next minute is the first inactive minute.
+        // End is exclusive, so 17:00 is the next day's start boundary.
         assertEquals(
-            60_000L,
+            16 * 60 * 60_000L,
             ScheduleEvaluator.millisUntilNextTransition(daytime, 17, 0),
         )
 
@@ -81,6 +124,11 @@ class PolicyComponentsTest {
         assertEquals(
             15 * 60 * 60_000L,
             ScheduleEvaluator.millisUntilNextTransition(overnight, 7, 0),
+        )
+        assertFalse(
+            ScheduleEvaluator.shouldTrackLocation(
+                LocationTrackerPolicy(scheduleWindow = overnight), 6, 0,
+            )
         )
     }
 
