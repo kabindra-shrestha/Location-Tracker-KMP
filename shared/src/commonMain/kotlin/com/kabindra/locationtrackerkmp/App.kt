@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -465,7 +465,11 @@ private fun TrackedLocationsBottomSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Tracked Locations", fontWeight = FontWeight.Bold, fontSize = 20.sp)
@@ -550,7 +554,10 @@ private fun TrackedLocationsBottomSheet(
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).padding(top = 12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(

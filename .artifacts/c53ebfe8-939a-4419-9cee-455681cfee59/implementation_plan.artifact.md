@@ -1,34 +1,31 @@
-# Implementation Plan - Fix Duplicate Keys in Tracked Locations List
+# Implementation Plan - Fix Unclickable Buttons in Bottom Sheet (iOS)
 
-Address the `IllegalArgumentException` caused by duplicate keys in the `LazyColumn` of the `TrackedLocationsBottomSheet`. This occurs when multiple location events share the same timestamp and kind.
-
-## User Review Required
-
-> [!IMPORTANT]
-> **Schema Change in Persistence**
-> I am adding a unique `id` field to the `TrackedLocationDebugEntry` data class. I will update the serialization logic in `TrackingSessionStore` to handle this new field. Existing persisted sessions might fail to decode individual debug entries (falling back to null/empty) until a new session is started, but the overall app state will remain stable.
+Improve the layout and gesture handling of the `TrackedLocationsBottomSheet` to ensure that filters and copy buttons remain clickable when the sheet is expanded to fullscreen, particularly on iOS.
 
 ## Proposed Changes
-
-### [location-tracker](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker)
-
-#### [MODIFY] [TrackingSession.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/commonMain/kotlin/com/kabindra/locationtracker/session/TrackingSession.kt)
-- Add `val id: String` to `TrackedLocationDebugEntry`.
-- Update `markStarted`, `onLocation`, `stop`, and `evaluateLatestLocationForSync` to generate unique IDs for each debug entry (e.g., `"${eventKind.name}-${timestampMs}-${randomSuffix}"`).
-
-#### [MODIFY] [TrackingSessionStore.android.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/androidMain/kotlin/com/kabindra/locationtracker/session/TrackingSessionStore.android.kt) & [TrackingSessionStore.ios.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/src/iosMain/kotlin/com/kabindra/locationtracker/session/TrackingSessionStore.ios.kt)
-- Update `encode` and `toDebugEntry` to include the `id` field.
 
 ### [shared](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared)
 
 #### [MODIFY] [App.kt](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/shared/src/commonMain/kotlin/com/kabindra/locationtrackerkmp/App.kt)
-- Update the `LazyColumn` key to use the new `id` field: `key = { it.id }`.
+- **Add `statusBarsPadding()` to Bottom Sheet Content**:
+    - Ensure the `Column` inside `ModalBottomSheet` respects the safe area. This prevents the title and filter chips from being obscured by the status bar/notch on iOS when fullscreen.
+- **Dynamic Content Height**:
+    - Replace the fixed `heightIn(max = 560.dp)` on the `LazyColumn` with `Modifier.weight(1f)`.
+    - This allows the list to occupy all available space when the sheet is expanded, reducing gesture conflicts with the background container.
+- **Explicit `navigationBarsPadding()`**:
+    - Add padding at the bottom of the `Column` to ensure the last items in the list aren't under the iOS home indicator.
+- **Refine `ExpressiveFilterItem` and `DebugLocationCard`**:
+    - Ensure `clickable` and `TextButton` components are configured to avoid gesture competition where possible.
 
 ## Verification Plan
 
 ### Manual Verification
-- Deploy to an Android device.
-- Start tracking and generate several location fixes.
-- Open the "Tracked Locations" bottom sheet and verify it no longer crashes.
-- Verify that filtering and scrolling work smoothly with the new unique keys.
-- Repeat for iOS.
+1.  **iOS Test**:
+    - Open "Tracked Locations".
+    - Drag/scroll the bottom sheet to fullscreen.
+    - Verify that the **Filter Chips** at the top are responsive to taps.
+    - Verify that the **Copy Button** in each card remains clickable.
+2.  **Android Test**:
+    - Verify that the layout remains consistent and buttons are clickable on Android.
+3.  **Notch/Status Bar Check**:
+    - Ensure content doesn't bleed into the status bar area when expanded.
