@@ -69,22 +69,17 @@ Overnight windows work. A `TIME_RANGE` policy with no `scheduleWindow` fails clo
 start tracking. In `CHECK_IN_OUT`, call `requestCheckIn()` / `requestCheckOut()`; the host callback
 must return the authoritative updated policy.
 
-After location permission is granted, start a policy-authorized session with:
+After background location permission is granted, use controls that reflect the policy mode rather
+than generic Start/Stop controls:
 
-```kotlin
-val started = LocationTrackingEngine.start(
-    policy = policyFromBackend,
-    config = TrackingConfig(
-        intervalMs = 30_000L,
-        minUpdateDistanceMeters = 20f,
-        priority = LocationPriority.HIGH_ACCURACY,
-        notificationSmallIconResId = R.drawable.ic_notification,
-    ),
-)
-```
+- `TIME_RANGE`: call `updatePolicy(policy)` after every backend response. The engine starts and
+  stops automatically at the eligible schedule boundaries.
+- `CHECK_IN_OUT`: show Check In and Check Out actions. They call `requestCheckIn()` and
+  `requestCheckOut()` respectively; the `CheckInOutListener` must return the updated backend policy
+  before the engine starts or stops collection.
 
-`start` returns `false` when policy or platform permissions do not permit collection. The Compose
-screen should render button state from `LocationTrackingSession.state`; it must not own syncing.
+The Compose screen may request permission and render `LocationTrackingSession.state`, but it must
+not own syncing or issue direct start/stop commands for either mode.
 
 ## Backend events and statuses
 

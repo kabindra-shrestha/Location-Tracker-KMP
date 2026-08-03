@@ -10,7 +10,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.kabindra.locationtracker.LocationTrackingEngine
 import com.kabindra.locationtracker.internal.LocationTrackerInit
+import com.kabindra.locationtracker.session.CheckInOutListener
 import com.kabindra.locationtracker.session.LocationTrackingListener
+import com.kabindra.locationtracker.session.LocationTrackingSession
 
 class MainApplication : Application() {
     override fun onCreate() {
@@ -20,10 +22,17 @@ class MainApplication : Application() {
         LocationTrackerInit.initialize(this)
         // Replace this sample listener with the host application's authenticated API call.
         // It is registered before any foreground service restoration can deliver an event.
-        LocationTrackingEngine.initialize(LocationTrackingListener { event ->
-            android.util.Log.i("LocationTracker", "Backend event: $event")
-            true
-        }, developerMode = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+        LocationTrackingEngine.initialize(
+            listener = LocationTrackingListener { event ->
+                android.util.Log.i("LocationTracker", "Backend event: $event")
+                true
+            },
+            developerMode = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+            checkInOutListener = CheckInOutListener { action ->
+                DemoTrackingBackend.performCheckInOut(action)
+            },
+        )
+        DemoTrackingBackend.restorePersistedPolicy(LocationTrackingSession.state.value.activePolicy)
     }
 }
 

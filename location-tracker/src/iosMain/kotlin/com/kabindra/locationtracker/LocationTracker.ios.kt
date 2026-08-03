@@ -12,7 +12,9 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +30,7 @@ import platform.CoreLocation.kCLAuthorizationStatusAuthorizedAlways
 import platform.CoreLocation.kCLLocationAccuracyBest
 import platform.CoreLocation.kCLLocationAccuracyHundredMeters
 import platform.CoreLocation.kCLLocationAccuracyNearestTenMeters
+import platform.Foundation.NSDate
 import platform.Foundation.NSError
 import platform.Foundation.NSLog
 import platform.Foundation.timeIntervalSince1970
@@ -47,6 +50,8 @@ import platform.darwin.NSObject
  */
 internal object IosLocationTracker : LocationTracker {
 
+    private const val MIN_CURRENT_FIX_INTERVAL_MS = 1_000L
+
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     internal val manager = CLLocationManager()
 
@@ -55,6 +60,9 @@ internal object IosLocationTracker : LocationTracker {
 
     private val _state = MutableStateFlow<TrackingState>(TrackingState.Idle)
     override val state: StateFlow<TrackingState> = _state.asStateFlow()
+    private var lastReportedTimestampMs = Long.MIN_VALUE
+    private var lastRawCallbackAtMs = 0L
+    private var currentFixWatchdog: Job? = null
 
     private val delegate = object : NSObject(), CLLocationManagerDelegateProtocol {
 
@@ -71,6 +79,11 @@ internal object IosLocationTracker : LocationTracker {
                 return
             }
             val trackedLocation = location.toTrackedLocation()
+            lastRawCallbackAtMs = nowMs()
+            // Standard updates and requestLocation() can return the same first fix. Keep the
+            // durable history and backend event stream to one record for that timestamp.
+            if (trackedLocation.timestampMs <= lastReportedTimestampMs) return
+            lastReportedTimestampMs = trackedLocation.timestampMs
 
             // Log for verification
             val isBackground =
@@ -101,6 +114,9 @@ internal object IosLocationTracker : LocationTracker {
 
     internal fun startNative(config: TrackingConfig) {
         _state.value = TrackingState.Starting
+        lastReportedTimestampMs = Long.MIN_VALUE
+        lastRawCallbackAtMs = 0L
+        currentFixWatchdog?.cancel()
 
         manager.delegate = delegate
         manager.desiredAccuracy = config.priority.toClAccuracy()
@@ -113,6 +129,7 @@ internal object IosLocationTracker : LocationTracker {
         // ------------------------------------------------------------------------
 
         manager.startUpdatingLocation()
+        startCurrentFixWatchdog(config)
         _state.value = TrackingState.Running
     }
 
@@ -121,6 +138,8 @@ internal object IosLocationTracker : LocationTracker {
     }
 
     internal fun stopNative(reason: TrackingStopReason) {
+        currentFixWatchdog?.cancel()
+        currentFixWatchdog = null
         LocationTrackingSession.stop(reason)
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
@@ -130,7 +149,11 @@ internal object IosLocationTracker : LocationTracker {
     internal fun configureReentry(policy: LocationTrackerPolicy?) {
         manager.delegate = delegate
         val shouldMonitor = policy?.isTrackingEnabled == true &&
-                policy.trackingMode == com.kabindra.locationtracker.model.TrackingMode.TIME_RANGE &&
+                // Significant-change monitoring is a best-effort wake-up after *system*
+                // termination. A checked-in manual session needs the same recovery path as an
+                // automatic Time Range session. It cannot override a user force-quit.
+                (policy.trackingMode == com.kabindra.locationtracker.model.TrackingMode.TIME_RANGE ||
+                        policy.isCheckedIn) &&
                 manager.authorizationStatus == kCLAuthorizationStatusAuthorizedAlways
         if (shouldMonitor) {
             // This is not an exact timer. It is the iOS-supported best-effort way to re-enter
@@ -159,6 +182,31 @@ internal object IosLocationTracker : LocationTracker {
             timestampMs = (timestamp.timeIntervalSince1970 * 1000).toLong(),
         )
     }
+
+    /**
+     * Core Location has a distance filter but no location-request interval equivalent to Android's
+     * Fused Location request. Keep standard updates as the primary source. If no raw callback
+     * arrives during the configured interval, restart the standard service to force Core Location
+     * to reconsider its current location. Unlike requestLocation(), this keeps continuous location
+     * services active for foreground and background tracking.
+     */
+    private fun startCurrentFixWatchdog(config: TrackingConfig) {
+        val intervalMs = config.intervalMs.coerceAtLeast(MIN_CURRENT_FIX_INTERVAL_MS)
+        currentFixWatchdog = trackerScope.launch {
+            while (LocationTrackingSession.state.value.isActive) {
+                delay(intervalMs)
+                if (!LocationTrackingSession.state.value.isActive) break
+                if (nowMs() - lastRawCallbackAtMs >= intervalMs) {
+                    NSLog("LocationTracker: restarting standard location updates after $intervalMs ms without a callback")
+                    manager.stopUpdatingLocation()
+                    manager.startUpdatingLocation()
+                }
+            }
+        }
+    }
+
+    private fun nowMs(): Long = (NSDate().timeIntervalSince1970 * 1_000).toLong()
+
 }
 
 internal actual object PlatformTrackingController {

@@ -64,13 +64,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupPositionProvider
-import com.kabindra.locationtracker.LocationTracker
 import com.kabindra.locationtracker.LocationTrackingEngine
 import com.kabindra.locationtracker.createLocationTracker
-import com.kabindra.locationtracker.model.LocationTrackerPolicy
-import com.kabindra.locationtracker.model.ScheduleWindow
-import com.kabindra.locationtracker.model.TrackedLocation
-import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingMode
 import com.kabindra.locationtracker.permission.LocationPermissionController
 import com.kabindra.locationtracker.permission.LocationPermissionStatus
@@ -104,40 +99,12 @@ private fun LocationTrackingScreen() {
     val sessionState by LocationTrackingSession.state.collectAsState()
     val developerMode by LocationTrackingSession.developerMode.collectAsState()
 
-    var lastLocation by remember { mutableStateOf<TrackedLocation?>(null) }
     var permissionStatus by remember { mutableStateOf<LocationPermissionStatus?>(null) }
     var isRequestingPermission by remember { mutableStateOf(false) }
     var showTrackedLocations by remember { mutableStateOf(false) }
 
-    // Backend policy simulation state
-    var backendTrackingEnabled by remember { mutableStateOf(true) }
-    var trackingMode by remember { mutableStateOf(TrackingMode.TIME_RANGE) }
-    var isCheckedIn by remember { mutableStateOf(false) }
-    var minDistanceThreshold by remember { mutableStateOf(50f) }
-    var syncIntervalMinutes by remember { mutableStateOf(5) }
-
-    // In production the host app receives this policy from its backend.
-    val policy = remember(
-        backendTrackingEnabled,
-        trackingMode,
-        isCheckedIn,
-        minDistanceThreshold,
-        syncIntervalMinutes
-    ) {
-        LocationTrackerPolicy(
-            isTrackingEnabled = backendTrackingEnabled,
-            trackingMode = trackingMode,
-            scheduleWindow = ScheduleWindow(
-                startHour = 0,
-                startMinute = 0,
-                endHour = 23,
-                endMinute = 59
-            ), // 24h for active testing
-            isCheckedIn = isCheckedIn,
-            minDistanceThresholdMeters = minDistanceThreshold,
-            syncIntervalMinutes = syncIntervalMinutes,
-        )
-    }
+    // In production the host app receives this complete policy from its backend.
+    val policy by DemoTrackingBackend.policy.collectAsState()
 
     LaunchedEffect(policy) {
         LocationTrackingEngine.updatePolicy(policy)
@@ -145,13 +112,6 @@ private fun LocationTrackingScreen() {
 
     LaunchedEffect(Unit) {
         permissionStatus = permissionController.status()
-    }
-
-    // Collect location updates and route through syncManager
-    LaunchedEffect(tracker) {
-        tracker.locations.collect { location ->
-            lastLocation = location
-        }
     }
 
     Column(
@@ -181,44 +141,44 @@ private fun LocationTrackingScreen() {
                     "Permission Status: ${permissionStatus ?: "Checking..."}",
                     fontWeight = FontWeight.SemiBold
                 )
-                Text("Tracker Engine State: $trackingState", fontWeight = FontWeight.SemiBold)
-                lastLocation?.let {
+                Text(
+                    "Tracker Engine State: ${if (sessionState.isActive) "Running" else "Idle"}",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Platform Tracker State: $trackingState",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                sessionState.lastKnownLocation?.let {
                     Text("Last Fix: ${it.latitude}, ${it.longitude}")
                     Text("Accuracy: ±${it.accuracyMeters}m | Speed: ${it.speedMetersPerSecond ?: 0f} m/s")
                 } ?: Text("Last Fix: No location fix yet", color = Color.Gray)
             }
         }
 
-        // Action Buttons: Permission & Tracking Control
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        // Permission enables policy-controlled tracking; it is not a manual tracking control.
+        if (permissionStatus != LocationPermissionStatus.GrantedAlways) {
             Button(
-                modifier = Modifier.weight(1f),
-                enabled = LocationTrackingSession.canStart() && !isRequestingPermission,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isRequestingPermission,
                 onClick = {
                     scope.launch {
                         isRequestingPermission = true
-                        val started =
-                            requestPermissionThenStartTracking(permissionController, tracker)
+                        val granted = requestBackgroundTrackingPermission(permissionController)
                         permissionStatus = permissionController.status()
+                        if (granted) LocationTrackingEngine.updatePolicy(policy)
                         isRequestingPermission = false
                     }
                 }
             ) {
-                Text(if (isRequestingPermission) "Requesting..." else "Start Tracking")
+                Text(if (isRequestingPermission) "Requesting..." else "Enable Background Location")
             }
-
-            OutlinedButton(
-                modifier = Modifier.weight(1f),
-                enabled = sessionState.isActive,
-                onClick = {
-                    tracker.stop()
-                }
-            ) {
-                Text("Stop Tracking")
-            }
+        } else {
+            Text(
+                "Background location is enabled. Tracking follows the current backend policy.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         HorizontalDivider()
@@ -243,8 +203,10 @@ private fun LocationTrackingScreen() {
                         overflow = TextOverflow.Ellipsis
                     )
                     Switch(
-                        checked = backendTrackingEnabled,
-                        onCheckedChange = { backendTrackingEnabled = it }
+                        checked = policy.isTrackingEnabled,
+                        onCheckedChange = { enabled ->
+                            DemoTrackingBackend.updatePolicy { it.copy(isTrackingEnabled = enabled) }
+                        },
                     )
                 }
 
@@ -254,43 +216,74 @@ private fun LocationTrackingScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Tracking Mode: ${trackingMode.name}",
+                        text = "Tracking Mode: ${policy.trackingMode.name}",
                         modifier = Modifier.weight(1f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Button(onClick = {
-                        trackingMode = if (trackingMode == TrackingMode.TIME_RANGE) {
-                            TrackingMode.CHECK_IN_OUT
-                        } else {
-                            TrackingMode.TIME_RANGE
+                        DemoTrackingBackend.updatePolicy {
+                            it.copy(
+                                trackingMode = if (it.trackingMode == TrackingMode.TIME_RANGE) {
+                                    TrackingMode.CHECK_IN_OUT
+                                } else {
+                                    TrackingMode.TIME_RANGE
+                                },
+                            )
                         }
                     }) {
                         Text("Switch Mode")
                     }
                 }
 
-                if (trackingMode == TrackingMode.CHECK_IN_OUT) {
+                if (policy.trackingMode == TrackingMode.CHECK_IN_OUT) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Check-In Status: ${if (isCheckedIn) "Checked IN" else "Checked OUT"}",
+                        Button(
                             modifier = Modifier.weight(1f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Switch(
-                            checked = isCheckedIn,
-                            onCheckedChange = { isCheckedIn = it }
-                        )
+                            enabled = !policy.isCheckedIn && !isRequestingPermission,
+                            onClick = {
+                                scope.launch {
+                                    isRequestingPermission = true
+                                    val granted =
+                                        requestBackgroundTrackingPermission(permissionController)
+                                    permissionStatus = permissionController.status()
+                                    if (granted) LocationTrackingEngine.requestCheckIn()
+                                    isRequestingPermission = false
+                                }
+                            },
+                        ) { Text("Check In") }
+                        OutlinedButton(
+                            modifier = Modifier.weight(1f),
+                            enabled = policy.isCheckedIn && !isRequestingPermission,
+                            onClick = { scope.launch { LocationTrackingEngine.requestCheckOut() } },
+                        ) { Text("Check Out") }
                     }
+                    Text(
+                        "Check-In and Check-Out call the host attendance API. Its returned policy " +
+                                "is the only thing that starts or stops tracking.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    val window = policy.scheduleWindow
+                    Text(
+                        "Automatic: the engine starts at ${
+                            window?.startHour?.toString()?.padStart(2, '0') ?: "--"
+                        }:" +
+                                "${
+                                    window?.startMinute?.toString()?.padStart(2, '0') ?: "--"
+                                } and stops at " +
+                                "${window?.endHour?.toString()?.padStart(2, '0') ?: "--"}:" +
+                                "${window?.endMinute?.toString()?.padStart(2, '0') ?: "--"}.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
 
-                Text("Distance Displacement Filter: ${minDistanceThreshold.toInt()} meters")
-                Text("Location sampling is configured separately; backend delivery uses the 50m filter.")
+                Text("Distance Displacement Filter: ${policy.minDistanceThresholdMeters.toInt()} meters")
+                Text("Location sampling is configured separately; backend delivery uses the displacement filter.")
             }
         }
 
@@ -360,7 +353,10 @@ private fun LocationTrackingScreen() {
                 "Last known location: ${sessionState.lastKnownLocation ?: "None"}",
                 color = Color.White
             )
-            Text("Start is enabled only when the backend policy permits it.", color = Color.Gray)
+            Text(
+                "Tracking is controlled by the persisted backend policy, not generic Start/Stop buttons.",
+                color = Color.Gray
+            )
         }
     }
 
@@ -616,10 +612,8 @@ private fun DebugLocationCard(entry: TrackedLocationDebugEntry) {
     }
 }
 
-suspend fun requestPermissionThenStartTracking(
+suspend fun requestBackgroundTrackingPermission(
     permissionController: LocationPermissionController,
-    tracker: LocationTracker,
-    config: TrackingConfig = TrackingConfig(),
 ): Boolean {
     val foregroundStatus = permissionController.requestForeground()
     if (foregroundStatus == LocationPermissionStatus.Denied) return false
@@ -630,6 +624,5 @@ suspend fun requestPermissionThenStartTracking(
 
     val backgroundStatus = permissionController.requestBackground()
     if (backgroundStatus != LocationPermissionStatus.GrantedAlways) return false
-    tracker.start(config)
     return true
 }

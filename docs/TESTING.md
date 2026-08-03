@@ -40,6 +40,8 @@ iOS devices:
 - Android Recents swipe and foreground-service recreation;
 - iOS background/suspension and Always permission behavior;
 - `< 50m`, exactly `50m`, and `> 50m` interval decisions;
+- on both platforms, a first raw fix after Check-In and, when standard updates are quiet, an iOS
+  current-fix recovery attempt after one raw interval even when the user has moved less than 20m;
 - listener failure/retry without advancing the last-synced location;
 - time-range start/end, overnight range, check-in, check-out, and master-policy disable;
 - expected limitation after Android force-stop and iOS force-quit.

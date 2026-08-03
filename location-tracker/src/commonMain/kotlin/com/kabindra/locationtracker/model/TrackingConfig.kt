@@ -14,8 +14,10 @@ enum class LocationPriority {
 /**
  * Configuration for a tracking session. Passed to [com.kabindra.locationtracker.LocationTracker.start].
  *
- * @param intervalMs desired interval between platform location updates. It does not by itself
- *   cause a backend upload; the session's 50m displacement rule remains the upload gate.
+ * @param intervalMs desired interval between raw location updates. Android supplies it to Fused
+ *   Location directly. On iOS, standard Core Location updates remain primary and they are
+ *   restarted only after this interval passes without a callback. It does not by itself cause a
+ *   backend upload; the session's 50m displacement rule remains the upload gate.
  * @param minUpdateDistanceMeters minimum displacement before a platform location update is emitted.
  * @param priority desired accuracy/power tradeoff.
  * @param notificationTitle Android-only: title of the persistent foreground service notification.

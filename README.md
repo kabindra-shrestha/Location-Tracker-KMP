@@ -17,8 +17,13 @@ The sample app demonstrates how to integrate the library into a modern Compose M
 
 - **Persistent engine**: The app initializes `LocationTrackingEngine` before Compose, allowing a
   recreated Android service or iOS coordinator to restore durable state and host delivery.
-- **Policy simulator**: The controls in the sample are local test controls, not a real backend.
+- **Policy-mode simulator**: The controls in the sample stand in for backend responses, not a real
+  backend. `TIME_RANGE` starts/stops automatically at its configured boundaries. `CHECK_IN_OUT`
+  shows Check In/Check Out actions that call the host callback and apply its returned policy.
   Production hosts fetch a complete `LocationTrackerPolicy` and call `updatePolicy(policy)`.
+- **No generic tracking controls**: The sample deliberately has no Start Tracking or Stop Tracking
+  buttons. Enabling background-location permission is separate from deciding whether policy permits
+  collection.
 - **Background permissions**: The sample requests foreground and Always/background location. Android
   notification permission is requested for visibility but does not block tracking.
 - **Developer Tools**:

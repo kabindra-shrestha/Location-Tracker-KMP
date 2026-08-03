@@ -36,7 +36,8 @@
   network transmission
 - [x] Implement real-time tracking dashboard showing permission status, tracking state, active mode,
   last tracked location, displacement filter stats, and sync callback logs
-- [x] Wire Start/Stop tracking, Check-in/Check-out controls, and schedule policy updates
+- [x] Replace generic Start/Stop controls with automatic Time Range behavior and host-mediated
+  Check-In/Check-Out actions; wire schedule policy updates
 
 ## Phase 5: Verification & Testing
 

@@ -15,6 +15,11 @@ The balanced default profile is:
 | Backend synchronization interval | 5 minutes (backend policy) |
 | Backend displacement threshold   | 50m (backend policy)       |
 
+Android passes the raw interval and platform displacement to Fused Location. iOS uses standard
+Core Location updates with the same displacement and restarts its standard service only when no raw
+callback arrives for the configured interval. This keeps the raw-fix target consistent without
+changing the common 50m upload rule.
+
 The host application provides the authenticated API uploader. The SDK does **not** contain an HTTP
 client, endpoint, or credentials.
 
@@ -22,7 +27,8 @@ client, endpoint, or credentials.
 
 `LocationTrackingEngine` is the only lifecycle entry point. It is initialized once by Android's
 `Application` and iOS's `App` initializer, before Compose renders. The screen only requests
-permission, invokes start/stop, and renders the persisted state.
+permission, invokes Check In/Out in manual mode, and renders the persisted state. It does not own
+generic Start/Stop tracking controls.
 
 ```mermaid
 flowchart TD
@@ -120,16 +126,22 @@ reconcile in its own process.
 
 iOS runs boundary reconciliation while the application remains running/backgrounded. It also
 enables significant-location monitoring as a best-effort re-entry signal after normal system
-termination. It is not an exact scheduled restart mechanism.
+termination for both Time Range and an active Check-In session. It is not an exact scheduled
+restart mechanism and cannot relaunch an app that the user force-quit from the App Switcher.
 
 Schedule windows are start-inclusive/end-exclusive: a `09:00–17:00` policy starts at 09:00 and is
 no longer eligible at 17:00. This avoids an unintended extra minute of tracking at the end boundary.
+The host UI should display schedule information only; it must not present Start/Stop controls for
+this automatic mode.
 
 ### Check-In / Check-Out
 
 Use `requestCheckIn()` and `requestCheckOut()` with a `CheckInOutListener`. The host executes its
 attendance API and returns the updated authoritative policy. Only that policy starts or stops the
 engine; the SDK does not infer a check-in from a UI control.
+
+The host UI exposes Check In while checked out and Check Out while checked in. It should not use a
+local switch to change `isCheckedIn` or replace these actions with generic Start/Stop buttons.
 
 If a policy update disables tracking, expires the schedule, or checks the user out, the engine
 stops collection, persists an inactive state, and enqueues `Stopped(..., POLICY)`.

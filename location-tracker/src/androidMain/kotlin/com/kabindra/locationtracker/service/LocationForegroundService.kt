@@ -49,6 +49,7 @@ class LocationForegroundService : Service() {
     private var activeCallback: LocationCallback? = null
     private var activeConfig = TrackingConfig()
     private var trackedPointCount = 0L
+    private var lastReportedTimestampMs = Long.MIN_VALUE
 
     private val _locations = MutableSharedFlow<TrackedLocation>(extraBufferCapacity = 64)
     val locations: SharedFlow<TrackedLocation> = _locations.asSharedFlow()
@@ -105,6 +106,7 @@ class LocationForegroundService : Service() {
     @SuppressLint("MissingPermission") // Caller is required to have checked permission before start()
     fun restartLocationUpdates(config: TrackingConfig) {
         removeActiveCallback()
+        lastReportedTimestampMs = Long.MIN_VALUE
         _state.value = TrackingState.Starting
 
         val request = LocationRequest.Builder(config.priority.toGmsPriority(), config.intervalMs)
@@ -115,43 +117,7 @@ class LocationForegroundService : Service() {
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
-                if (!LocationTrackingSession.isTrackingAllowed()) {
-                    stopTracking(TrackingStopReason.POLICY)
-                    return
-                }
-                trackedPointCount += 1
-                updateNotification()
-
-                // Log for verification
-                Log.d(
-                    "LocationTracker",
-                    "BACKGROUND TRACKING: Received fix - Lat: ${location.latitude}, Lon: ${location.longitude}"
-                )
-
-                LocationTrackingSession.onLocation(
-                    TrackedLocation(
-                        latitude = location.latitude,
-                        longitude = location.longitude,
-                        accuracyMeters = location.accuracy,
-                        speedMetersPerSecond = location.speed.takeIf { location.hasSpeed() },
-                        bearingDegrees = location.bearing.takeIf { location.hasBearing() },
-                        altitudeMeters = location.altitude.takeIf { location.hasAltitude() },
-                        timestampMs = location.time,
-                    ),
-                )
-                serviceScope.launch {
-                    _locations.emit(
-                        TrackedLocation(
-                            latitude = location.latitude,
-                            longitude = location.longitude,
-                            accuracyMeters = location.accuracy,
-                            speedMetersPerSecond = location.speed.takeIf { location.hasSpeed() },
-                            bearingDegrees = location.bearing.takeIf { location.hasBearing() },
-                            altitudeMeters = location.altitude.takeIf { location.hasAltitude() },
-                            timestampMs = location.time,
-                        ),
-                    )
-                }
+                recordLocation(location)
             }
 
             override fun onLocationAvailability(availability: com.google.android.gms.location.LocationAvailability) {
@@ -163,6 +129,13 @@ class LocationForegroundService : Service() {
 
         activeCallback = callback
         fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+        // The 20m raw-update displacement saves battery after startup, but must not make the
+        // first Start event wait until the person moves. Ask Fused Location for one current fix.
+        fusedClient.getCurrentLocation(config.priority.toGmsPriority(), null)
+            .addOnSuccessListener { location -> location?.let(::recordLocation) }
+            .addOnFailureListener { error ->
+                Log.w("LocationTracker", "Unable to obtain initial location fix", error)
+            }
         _state.value = TrackingState.Running
     }
 
@@ -184,6 +157,35 @@ class LocationForegroundService : Service() {
     private fun removeActiveCallback() {
         activeCallback?.let { fusedClient.removeLocationUpdates(it) }
         activeCallback = null
+    }
+
+    private fun recordLocation(location: android.location.Location) {
+        // requestLocationUpdates() and getCurrentLocation() can report the same fix. Do not create
+        // duplicate debug records or backend events for an identical timestamp.
+        if (location.time <= lastReportedTimestampMs) return
+        lastReportedTimestampMs = location.time
+        if (!LocationTrackingSession.isTrackingAllowed()) {
+            stopTracking(TrackingStopReason.POLICY)
+            return
+        }
+
+        trackedPointCount += 1
+        updateNotification()
+        val trackedLocation = TrackedLocation(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = location.accuracy,
+            speedMetersPerSecond = location.speed.takeIf { location.hasSpeed() },
+            bearingDegrees = location.bearing.takeIf { location.hasBearing() },
+            altitudeMeters = location.altitude.takeIf { location.hasAltitude() },
+            timestampMs = location.time,
+        )
+        Log.d(
+            "LocationTracker",
+            "BACKGROUND TRACKING: Received fix - Lat: ${trackedLocation.latitude}, Lon: ${trackedLocation.longitude}",
+        )
+        LocationTrackingSession.onLocation(trackedLocation)
+        serviceScope.launch { _locations.emit(trackedLocation) }
     }
 
     private fun LocationPriority.toGmsPriority(): Int = when (this) {

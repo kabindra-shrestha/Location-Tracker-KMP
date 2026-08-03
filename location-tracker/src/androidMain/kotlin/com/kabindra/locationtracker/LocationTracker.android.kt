@@ -32,7 +32,9 @@ import kotlinx.coroutines.launch
  */
 internal class AndroidLocationTracker(private val appContext: Context) : LocationTracker {
 
-    private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Service binding and ServiceConnection callbacks belong on the main thread. The actual
+    // location collection remains in the foreground service, independent of this UI adapter.
+    private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _locations = MutableSharedFlow<TrackedLocation>(extraBufferCapacity = 64)
     override val locations: Flow<TrackedLocation> = _locations.asSharedFlow()
@@ -61,7 +63,22 @@ internal class AndroidLocationTracker(private val appContext: Context) : Locatio
     }
 
     init {
-        if (LocationTrackingSession.state.value.isActive) bindToService()
+        // Policy reconciliation starts the foreground service directly, without calling this
+        // presentation adapter. Observe the durable session so a tracker created before a
+        // Check-In attaches once that service becomes active and receives its Running state.
+        trackerScope.launch {
+            var wasActive = false
+            LocationTrackingSession.state.collect { session ->
+                if (session.isActive) {
+                    _state.value = TrackingState.Starting
+                    bindToService()
+                } else if (wasActive) {
+                    unbindFromService()
+                    _state.value = TrackingState.Stopped
+                }
+                wasActive = session.isActive
+            }
+        }
     }
 
     override fun start(config: TrackingConfig) {
@@ -74,12 +91,7 @@ internal class AndroidLocationTracker(private val appContext: Context) : Locatio
         // A recreated UI is not necessarily bound to the started foreground service. The engine
         // always sends an explicit command, so Stop works in either case.
         LocationTrackingEngine.stop()
-        if (isBound) {
-            runCatching { appContext.unbindService(connection) }
-            isBound = false
-        }
-        boundService = null
-        collectJob?.cancel()
+        unbindFromService()
         _state.value = TrackingState.Stopped
     }
 
@@ -91,6 +103,16 @@ internal class AndroidLocationTracker(private val appContext: Context) : Locatio
             Context.BIND_AUTO_CREATE,
         )
         isBound = true
+    }
+
+    private fun unbindFromService() {
+        if (isBound) {
+            runCatching { appContext.unbindService(connection) }
+            isBound = false
+        }
+        boundService = null
+        collectJob?.cancel()
+        collectJob = null
     }
 }
 

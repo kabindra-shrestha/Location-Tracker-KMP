@@ -50,9 +50,20 @@ are supported. A `TIME_RANGE` policy with no window is malformed and fails close
 - iOS requires When In Use then Always location authorization and the `location` background mode.
   Its background-location indicator is used; notification permission is optional.
 
+### Host controls
+
+- Do not expose generic Start Tracking or Stop Tracking controls.
+- In `TIME_RANGE`, the host displays the current schedule and the engine starts/stops from backend
+  policy and time boundaries after permission is available.
+- In `CHECK_IN_OUT`, the host displays Check In while `isCheckedIn` is false and Check Out while it
+  is true. Each action is sent through `CheckInOutListener`; only its returned policy changes the
+  tracking session.
+- Location permission is a separate prerequisite action, not a tracking-start action.
+
 ## Acceptance criteria
 
-- Start is disabled while a persisted session is active or current backend policy is ineligible.
+- The host has no generic Start/Stop controls. Time Range is automatic; Check-In/Out is the only
+  manual tracking action.
 - Updating policy stops an active session when the master flag, schedule, or check-in state becomes
   ineligible.
 - Android and iOS share the same 50m, status, retry, and policy evaluation logic.
