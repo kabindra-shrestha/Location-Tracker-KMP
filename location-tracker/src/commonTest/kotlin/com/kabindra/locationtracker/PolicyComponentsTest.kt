@@ -143,6 +143,17 @@ class PolicyComponentsTest {
         assertFalse(DistanceFilter.isSignificantMovement(origin, fiftyMetersNorth, 50.1f))
     }
 
+    @Test
+    fun distanceFilterCorrectlyEvaluatesRadiusCheck() {
+        val officeLat = 40.7128
+        val officeLon = -74.0060
+        val currentAtOffice = locationAt(officeLat, officeLon)
+        val currentFarAway = locationAt(officeLat + 1.0, officeLon + 1.0)
+
+        assertTrue(DistanceFilter.isWithinRadius(currentAtOffice, officeLat, officeLon, 50.0))
+        assertFalse(DistanceFilter.isWithinRadius(currentFarAway, officeLat, officeLon, 100.0))
+    }
+
     private fun locationAt(latitude: Double, longitude: Double) = TrackedLocation(
         latitude = latitude,
         longitude = longitude,

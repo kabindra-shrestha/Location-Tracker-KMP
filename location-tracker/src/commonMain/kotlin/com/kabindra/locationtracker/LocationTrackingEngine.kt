@@ -1,6 +1,8 @@
 package com.kabindra.locationtracker
 
+import com.kabindra.locationtracker.compass.CompassCurrentLocation
 import com.kabindra.locationtracker.model.LocationTrackerPolicy
+import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingConfig
 import com.kabindra.locationtracker.model.TrackingMode
 import com.kabindra.locationtracker.schedule.ScheduleEvaluator
@@ -34,6 +36,12 @@ object LocationTrackingEngine {
         LocationTrackingSession.initialize(listener, developerMode, checkInOutListener)
         restoreIfActive()
     }
+
+    /**
+     * Retrieves the user's current location once, without starting continuous tracking.
+     * Delegates to Compass's geolocator which handles permission prompts on both platforms.
+     */
+    suspend fun getCurrentLocation(): TrackedLocation? = CompassCurrentLocation.getCurrentLocation()
 
     /** Persists policy/configuration first, then asks the platform-owned collector to start. */
     fun start(policy: LocationTrackerPolicy, config: TrackingConfig = TrackingConfig()): Boolean {

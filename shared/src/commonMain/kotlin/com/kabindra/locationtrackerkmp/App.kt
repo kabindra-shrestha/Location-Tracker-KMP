@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,6 +67,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupPositionProvider
 import com.kabindra.locationtracker.LocationTrackingEngine
 import com.kabindra.locationtracker.createLocationTracker
+import com.kabindra.locationtracker.filter.DistanceFilter
+import com.kabindra.locationtracker.model.TrackedLocation
 import com.kabindra.locationtracker.model.TrackingMode
 import com.kabindra.locationtracker.permission.LocationPermissionController
 import com.kabindra.locationtracker.permission.LocationPermissionStatus
@@ -102,6 +105,8 @@ private fun LocationTrackingScreen() {
     var permissionStatus by remember { mutableStateOf<LocationPermissionStatus?>(null) }
     var isRequestingPermission by remember { mutableStateOf(false) }
     var showTrackedLocations by remember { mutableStateOf(false) }
+    var oneShotLocation by remember { mutableStateOf<TrackedLocation?>(null) }
+    var isFetchingOneShot by remember { mutableStateOf(false) }
 
     // In production the host app receives this complete policy from its backend.
     val policy by DemoTrackingBackend.policy.collectAsState()
@@ -284,6 +289,91 @@ private fun LocationTrackingScreen() {
 
                 Text("Distance Displacement Filter: ${policy.minDistanceThresholdMeters.toInt()} meters")
                 Text("Location sampling is configured separately; backend delivery uses the displacement filter.")
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("Geofence Radius: ${policy.geofenceRadiusMeters.toInt()} meters")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(50f, 100f, 500f).forEach { radius ->
+                        OutlinedButton(
+                            onClick = {
+                                DemoTrackingBackend.updatePolicy { it.copy(geofenceRadiusMeters = radius) }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(4.dp)
+                        ) {
+                            Text("${radius.toInt()}m", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        // One-Shot Geofence Check
+        Text("One-Shot Geofence Check", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Office Location: ${policy.officeLatitude ?: "--"}, ${policy.officeLongitude ?: "--"}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Allowed Radius: ${policy.geofenceRadiusMeters.toInt()} meters",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isFetchingOneShot,
+                    onClick = {
+                        scope.launch {
+                            isFetchingOneShot = true
+                            oneShotLocation = LocationTrackingEngine.getCurrentLocation()
+                            isFetchingOneShot = false
+                        }
+                    }
+                ) {
+                    Text(if (isFetchingOneShot) "Fetching Location..." else "Check Distance from Office")
+                }
+
+                oneShotLocation?.let { loc ->
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            DemoTrackingBackend.updatePolicy {
+                                it.copy(officeLatitude = loc.latitude, officeLongitude = loc.longitude)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Text("Set Current as Office Location")
+                    }
+
+                    val distance = policy.officeLatitude?.let { lat ->
+                        policy.officeLongitude?.let { lon ->
+                            DistanceFilter.calculateDistanceMeters(
+                                loc.latitude, loc.longitude,
+                                lat, lon
+                            )
+                        }
+                    } ?: 0.0
+
+                    val isInside = distance <= policy.geofenceRadiusMeters
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("Your Location: ${loc.latitude}, ${loc.longitude}")
+                    Text("Distance: ${distance.toInt()} meters")
+                    Text(
+                        text = if (isInside) "Status: INSIDE RADIUS" else "Status: OUTSIDE RADIUS",
+                        color = if (isInside) Color(0xFF2E7D32) else Color(0xFFC62828),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 

@@ -2,6 +2,7 @@ package com.kabindra.locationtrackerkmp
 
 import com.kabindra.locationtracker.model.LocationTrackerPolicy
 import com.kabindra.locationtracker.model.ScheduleWindow
+import com.kabindra.locationtracker.model.TrackingMode
 import com.kabindra.locationtracker.session.CheckInOutAction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,11 +35,14 @@ object DemoTrackingBackend {
 
     private fun defaultPolicy() = LocationTrackerPolicy(
         isTrackingEnabled = true,
-        trackingMode = com.kabindra.locationtracker.model.TrackingMode.TIME_RANGE,
+        trackingMode = TrackingMode.TIME_RANGE,
         // The demo remains eligible for most of the day so automatic-mode behavior is easy to test.
-        scheduleWindow = ScheduleWindow(0, 0, 23, 59),
+        scheduleWindow = ScheduleWindow(9, 30, 18, 0),
         isCheckedIn = false,
         minDistanceThresholdMeters = 50f,
         syncIntervalMinutes = 5,
+        officeLatitude = 27.7179907,
+        officeLongitude = 85.2985656,
+        geofenceRadiusMeters = 50.0f,
     )
 }

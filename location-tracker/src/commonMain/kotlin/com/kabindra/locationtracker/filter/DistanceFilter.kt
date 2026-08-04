@@ -37,6 +37,22 @@ object DistanceFilter {
     }
 
     /**
+     * Returns true if [current] is within [radiusMeters] of the specified target coordinates.
+     */
+    fun isWithinRadius(
+        current: TrackedLocation,
+        targetLat: Double,
+        targetLon: Double,
+        radiusMeters: Double
+    ): Boolean {
+        val distance = calculateDistanceMeters(
+            current.latitude, current.longitude,
+            targetLat, targetLon
+        )
+        return distance <= radiusMeters
+    }
+
+    /**
      * Returns true if [newLocation] is displaced by at least [thresholdMeters] from [lastLocation].
      * If [lastLocation] is null, returns true (first location fix).
      */

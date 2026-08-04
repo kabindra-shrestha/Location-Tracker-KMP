@@ -1,3 +1,7 @@
-- [x] Add `statusBarsPadding()` and `navigationBarsPadding()` to `TrackedLocationsBottomSheet` content in `App.kt`
-- [x] Refactor `LazyColumn` to use `Modifier.weight(1f)` instead of fixed height
-- [x] Verify clickability of filters and copy buttons on iOS and Android
+- [x] [location-tracker] Update `LocationTrackerPolicy` with office location and radius
+- [x] [location-tracker] Add `getCurrentLocation` to `LocationTrackingEngine`
+- [x] [location-tracker] Add `isWithinRadius` utility to `DistanceFilter`
+- [x] [shared] Update `DemoTrackingBackend` with default office coordinates
+- [x] [shared] Implement Geofence Check UI in `App.kt`
+- [x] [location-tracker] Update `PolicyComponentsTest.kt`
+- [ ] Verify functionality on Android and iOS

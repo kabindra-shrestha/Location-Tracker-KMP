@@ -54,10 +54,10 @@ data class LocationTrackerPolicy(
 
     /** Daily time window during which location tracking is active (for TIME_RANGE mode). */
     val scheduleWindow: ScheduleWindow? = ScheduleWindow(
-        startHour = 9,
+        startHour = 0,
         startMinute = 0,
-        endHour = 20,
-        endMinute = 0
+        endHour = 23,
+        endMinute = 59
     ),
 
     /** Current check-in state (for CHECK_IN_OUT mode). */
@@ -68,11 +68,21 @@ data class LocationTrackerPolicy(
 
     /** Interval between displacement checks and ongoing location uploads. Start/stop events are immediate. */
     val syncIntervalMinutes: Int = 5,
+
+    /** Latitude of the authorized tracking center (e.g. office or worksite). */
+    val officeLatitude: Double? = 27.71799075127108,
+
+    /** Longitude of the authorized tracking center. */
+    val officeLongitude: Double? = 85.2985656622389,
+
+    /** Allowed radius in meters around the office location for geofence checks. */
+    val geofenceRadiusMeters: Float = 50.0f,
 ) {
     init {
         require(minDistanceThresholdMeters >= 0f) {
             "minDistanceThresholdMeters must be non-negative"
         }
         require(syncIntervalMinutes > 0) { "syncIntervalMinutes must be greater than zero" }
+        require(geofenceRadiusMeters >= 0f) { "geofenceRadiusMeters must be non-negative" }
     }
 }

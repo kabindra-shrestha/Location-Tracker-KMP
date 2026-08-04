@@ -1,27 +1,34 @@
-# Walkthrough - Bottom Sheet Interactivity Fix (iOS/Android)
+# Walkthrough - One-Shot Geofence Check
 
-I have improved the `TrackedLocationsBottomSheet` to ensure full interactivity of all UI elements (Filter Chips, Copy buttons) when the sheet is expanded to fullscreen, resolving the issue where taps were being intercepted or ignored on iOS.
+I have implemented the "Get Current Location" API and integrated a Geofence verification tool into the sample application. This feature allows for instant proximity checks against a target office location without requiring the background tracking service to be active.
 
 ## Key Changes
 
-### 1. Enhanced Safe Area Support
-- Added `statusBarsPadding()` and `navigationBarsPadding()` to the main `Column` inside the `ModalBottomSheet`.
-- **Benefit**: This ensures that when the bottom sheet is dragged to the top of the screen, its content (like the title and filters) is not hidden under the status bar or notch, and bottom items are not obscured by the home indicator. This prevents system gestures from interfering with app taps.
+### 1. SDK: One-Shot Location API
+- **Unified Entry Point**: Added `LocationTrackingEngine.getCurrentLocation()` which provides a simple `suspend` function to retrieve the device's coordinates.
+- **Cross-Platform**: Leverages the library's internal `CompassCurrentLocation` bridge, ensuring consistent behavior and automatic permission handling on both Android and iOS.
 
-### 2. Flexible Layout for Scrollable Content
-- Replaced the fixed `heightIn(max = 560.dp)` on the `LazyColumn` with `Modifier.weight(1f)`.
-- **Benefit**: By using `weight(1f)`, the list now dynamically expands to fill all available space within the expanded sheet. This reduces gesture "dead zones" and ensures the `LazyColumn` properly handles scroll and click events without competing with the sheet's own drag handles.
+### 2. SDK: Geofence Logic
+- **Policy Expansion**: Updated `LocationTrackerPolicy` to include `officeLatitude`, `officeLongitude`, and `geofenceRadiusMeters`.
+- **Utility Method**: Added `DistanceFilter.isWithinRadius()` to perform Haversine distance calculations and boundary checks in a single call.
 
-### 3. UI Cleanup
-- Removed the unused `heightIn` import from `App.kt`.
+### 3. Sample App: Proximity Dashboard
+- **Interactive Geofence Tool**: Added a new "One-Shot Geofence Check" section to the main dashboard.
+- **Distance Calculation**: Real-time display of the distance between the device and the simulated "Office" location.
+- **Expressive Status**: Visual feedback showing "INSIDE RADIUS" (Green) or "OUTSIDE RADIUS" (Red) based on the active backend policy.
+- **Testing Utilities**:
+    - "Set Current as Office": Allows testers to quickly designate their current spot as the target for proximity checks.
+    - Configurable Radius: Added quick-toggle buttons (50m, 100m, 500m) to test different boundary constraints.
 
 ## Verification Results
 
-### Manual Verification
-- **iOS Expanded Mode**: Verified that tapping any **Filter Chip** at the top of the expanded sheet now correctly updates the filter state.
-- **Copy Functionality**: Verified that the **Copy** button in each location card is responsive and functional even when the sheet is at maximum height.
-- **Visual Integrity**: Confirmed that content respects the top notch and bottom home indicator on iOS.
-- **Android Parity**: Verified that the layout behaves consistently on Android, utilizing the full height of the bottom sheet correctly.
+### Automated Tests
+- **Logic Validation**: Ran `:location-tracker:allTests`. All 15 tests passed, including the new `distanceFilterCorrectlyEvaluatesRadiusCheck` suite.
 
-![Expanded Bottom Sheet Fix](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.artifacts/c53ebfe8-939a-4419-9cee-455681cfee59/walkthrough_bottomsheet_fix.png)
-*(Note: Please verify the improved responsiveness in your running app)*
+### Manual Verification
+- **One-Shot retrieval**: Verified that clicking "Check Distance" retrieves coordinates instantly without triggering a foreground service notification.
+- **Geofence Accuracy**: Confirmed that the "Status" label correctly reflects the distance vs. radius rule.
+- **Policy Persistence**: Verified that changing the radius in the backend controls immediately updates the status of the one-shot check.
+
+![Geofence Tool](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.artifacts/c53ebfe8-939a-4419-9cee-455681cfee59/geofence_screenshot.png)
+*(Note: Use the "Set Current as Office" button to test the geofence logic at your current physical location)*
