@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -31,7 +35,7 @@ jobs:
         run: ./gradlew :location-tracker:assemble
 
       - name: Publish to GitHub Packages
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/V-')
         run: ./gradlew :location-tracker:publishAllPublicationsToGitHubPackagesRepository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
