@@ -1,34 +1,36 @@
-# Walkthrough - One-Shot Geofence Check
+# Walkthrough - CI/CD for GitHub and GitLab Packages
 
-I have implemented the "Get Current Location" API and integrated a Geofence verification tool into the sample application. This feature allows for instant proximity checks against a target office location without requiring the background tracking service to be active.
+I have successfully set up a dual-platform CI/CD pipeline for the `location-tracker` KMP library, allowing it to be published to both GitHub Packages and the GitLab Package Registry.
 
-## Key Changes
+## Key Enhancements
 
-### 1. SDK: One-Shot Location API
-- **Unified Entry Point**: Added `LocationTrackingEngine.getCurrentLocation()` which provides a simple `suspend` function to retrieve the device's coordinates.
-- **Cross-Platform**: Leverages the library's internal `CompassCurrentLocation` bridge, ensuring consistent behavior and automatic permission handling on both Android and iOS.
+### 1. Dual-Registry Publishing Support
+- **SDK Build Script**: Updated [location-tracker/build.gradle.kts](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/location-tracker/build.gradle.kts) to define both `GitHubPackages` and `GitLab` repositories in the `publishing` block.
+- **Configurability**: Integrated project properties like `GITLAB_PROJECT_ID` and `GITLAB_API_URL` to allow dynamic publishing coordinates without hardcoding values in the build script.
 
-### 2. SDK: Geofence Logic
-- **Policy Expansion**: Updated `LocationTrackerPolicy` to include `officeLatitude`, `officeLongitude`, and `geofenceRadiusMeters`.
-- **Utility Method**: Added `DistanceFilter.isWithinRadius()` to perform Haversine distance calculations and boundary checks in a single call.
+### 2. GitHub Actions Workflow
+- **File**: [.github/workflows/publish.yml](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.github/workflows/publish.yml)
+- **Features**:
+    - **Automated Checks**: Runs library tests and builds the XCFramework on every push to `main` and pull requests.
+    - **Tag-Triggered Release**: Automatically publishes to GitHub Packages whenever a version tag (e.g., `v0.1.1`) is pushed.
+    - **macOS Runners**: Uses `macos-latest` to ensure all multiplatform targets (including iOS) are built correctly.
 
-### 3. Sample App: Proximity Dashboard
-- **Interactive Geofence Tool**: Added a new "One-Shot Geofence Check" section to the main dashboard.
-- **Distance Calculation**: Real-time display of the distance between the device and the simulated "Office" location.
-- **Expressive Status**: Visual feedback showing "INSIDE RADIUS" (Green) or "OUTSIDE RADIUS" (Red) based on the active backend policy.
-- **Testing Utilities**:
-    - "Set Current as Office": Allows testers to quickly designate their current spot as the target for proximity checks.
-    - Configurable Radius: Added quick-toggle buttons (50m, 100m, 500m) to test different boundary constraints.
+### 3. GitLab CI Pipeline
+- **File**: [.gitlab-ci.yml](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.gitlab-ci.yml)
+- **Features**:
+    - **Multi-stage Pipeline**: Defines `test`, `build`, and `publish` stages.
+    - **Native Artifacts**: Builds and archives the iOS XCFramework as a CI artifact.
+    - **Secure Publishing**: Uses `CI_JOB_TOKEN` for seamless authentication with the GitLab Package Registry.
 
-## Verification Results
+### 4. Comprehensive Setup Guide
+- **Updated README**: The root [README.md](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/README.md) now includes a dedicated "CI/CD & Publishing" section.
+- **Consumption Instructions**: Provided clear Gradle snippets for developers to consume the library from either GitHub or GitLab, including authentication requirements.
 
-### Automated Tests
-- **Logic Validation**: Ran `:location-tracker:allTests`. All 15 tests passed, including the new `distanceFilterCorrectlyEvaluatesRadiusCheck` suite.
+## Verification
+- **Build Success**: Confirmed that `./gradlew :location-tracker:assemble` runs successfully with the new publishing configuration.
+- **Test Integrity**: Verified that existing library tests pass on both Android and iOS targets.
 
-### Manual Verification
-- **One-Shot retrieval**: Verified that clicking "Check Distance" retrieves coordinates instantly without triggering a foreground service notification.
-- **Geofence Accuracy**: Confirmed that the "Status" label correctly reflects the distance vs. radius rule.
-- **Policy Persistence**: Verified that changing the radius in the backend controls immediately updates the status of the one-shot check.
-
-![Geofence Tool](file:///Users/vianet/Kabindra/Own/Location-Tracker-KMP/.artifacts/c53ebfe8-939a-4419-9cee-455681cfee59/geofence_screenshot.png)
-*(Note: Use the "Set Current as Office" button to test the geofence logic at your current physical location)*
+> [!IMPORTANT]
+> To finish the setup, ensure you add the following CI/CD variables in your GitLab project settings if you haven't already:
+> - `GITLAB_PROJECT_ID`: Your numeric GitLab project ID.
+> - `GITLAB_API_URL`: Usually `https://gitlab.com/api/v4`.

@@ -65,5 +65,45 @@ For information on the internal tracking flows, distance filtering logic, and pl
 - **[Internal Technical Docs](location-tracker/TECHNICAL_DOCS.md)**
 - **[Testing Guide](docs/TESTING.md)**
 
+## CI/CD & Publishing
+
+This project is configured to publish the `:location-tracker` library to both **GitHub Packages** and **GitLab Package Registry**.
+
+### GitHub Actions
+The library is automatically tested and built on every push to `main`. When a new tag starting with `v` is pushed, it is published to GitHub Packages.
+
+### GitLab CI
+A `.gitlab-ci.yml` is provided for GitLab environments, supporting automated tests and manual release publishing to the GitLab Package Registry.
+
+## Consumption
+
+### From GitHub Packages
+`settings.gradle.kts`:
+```kotlin
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/OWNER/REPO")
+        credentials {
+            username = "GITHUB_USER"
+            password = "GITHUB_TOKEN"
+        }
+    }
+}
+```
+
+### From GitLab Package Registry
+`settings.gradle.kts`:
+```kotlin
+repositories {
+    maven {
+        url = uri("https://gitlab.com/api/v4/projects/PROJECT_ID/packages/maven")
+        credentials {
+            username = "Private-Token"
+            password = "YOUR_PERSONAL_ACCESS_TOKEN"
+        }
+    }
+}
+```
+
 ## License
 MIT

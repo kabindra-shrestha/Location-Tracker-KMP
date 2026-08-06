@@ -1,7 +1,6 @@
-- [x] [location-tracker] Update `LocationTrackerPolicy` with office location and radius
-- [x] [location-tracker] Add `getCurrentLocation` to `LocationTrackingEngine`
-- [x] [location-tracker] Add `isWithinRadius` utility to `DistanceFilter`
-- [x] [shared] Update `DemoTrackingBackend` with default office coordinates
-- [x] [shared] Implement Geofence Check UI in `App.kt`
-- [x] [location-tracker] Update `PolicyComponentsTest.kt`
-- [ ] Verify functionality on Android and iOS
+- [x] [location-tracker] Update `build.gradle.kts` with GitLab publishing registry
+- [x] [root] Update `gradle.properties` with GitLab placeholders
+- [x] [root] Create `.github/workflows/publish.yml`
+- [x] [root] Create `.gitlab-ci.yml`
+- [x] [root] Update `README.md` with dual-registry setup instructions
+- [x] Verify Gradle sync and build

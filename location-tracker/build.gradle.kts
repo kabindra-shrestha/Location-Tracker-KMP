@@ -122,6 +122,14 @@ publishing {
                     System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") as String?
             }
         }
+        maven {
+            name = "GitLab"
+            url = uri("${project.findProperty("GITLAB_API_URL")}/projects/${project.findProperty("GITLAB_PROJECT_ID")}/packages/maven")
+            credentials {
+                username = System.getenv("GITLAB_USER") ?: "Job-Token"
+                password = System.getenv("GITLAB_TOKEN") ?: System.getenv("CI_JOB_TOKEN")
+            }
+        }
     }
 
     publications.withType<MavenPublication>().configureEach {
