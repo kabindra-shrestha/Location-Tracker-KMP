@@ -102,7 +102,7 @@ kotlin {
 //       }
 //   }
 //
-// Then: implementation("com.kabindra:location-tracker:0.1.0")
+// Then: implementation("com.kabindra:location-tracker:1.0.0")
 // ---------------------------------------------------------------------------
 publishing {
     repositories {

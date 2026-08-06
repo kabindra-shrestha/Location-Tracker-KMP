@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   test:
-    name: 🧪 Run Tests
+    name: Run Tests
     runs-on: macos-latest
 
     steps:
@@ -32,7 +32,7 @@ jobs:
         run: ./gradlew :location-tracker:allTests
 
   build:
-    name: 🔨 Build Library
+    name: Build Library
     runs-on: macos-latest
     needs: test
 
@@ -51,7 +51,7 @@ jobs:
         run: ./gradlew :location-tracker:assemble
 
   publish:
-    name: 🚀 Publish GitHub Packages
+    name: Publish GitHub Packages
     runs-on: macos-latest
     needs: build
 
